@@ -365,8 +365,8 @@ async def show_grup_panel(query, chat_id: int):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    text = f"⚙️ **{title}** Grubu Yönetim Paneli\n\n- Buton Linki: {b_linki}\n- Buton Yazısı: {b_yazisi}\n\nAşağıdaki butonlara tıklayarak istediğiniz ayarı değiştirebilirsiniz:"
-    await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")
+    text = f"⚙️ {title} Grubu Yönetim Paneli\n\n- Buton Linki: {b_linki}\n- Buton Yazısı: {b_yazisi}\n\nAşağıdaki butonlara tıklayarak istediğiniz ayarı değiştirebilirsiniz:"
+    await query.edit_message_text(text=text, reply_markup=reply_markup)
 
 async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
