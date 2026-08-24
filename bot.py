@@ -24,7 +24,7 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-ADMIN_KODU = "57000"
+ADMIN_KODU = "892000"
 HAKKINDA_METNI = "🤖 **ProyuncuTR_hck Chat Bot**\nVersion v1.3\nBy @ProyuncuTR\n2026 ProyuncuTR_hck chat bot"
 
 conn = sqlite3.connect("bot_data.db", check_same_thread=False)
@@ -90,6 +90,7 @@ async def is_admin(user_id: int) -> bool:
     return cursor.fetchone() is not None
 
 def get_grup_ayar(chat_id: int):
+    chat_id = int(chat_id)
     cursor.execute("SELECT hosgeldin_mesaj, hoscakal_mesaj, buton_aktif, buton_yazisi, buton_linki FROM grup_ayarlari WHERE chat_id = ?", (chat_id,))
     row = cursor.fetchone()
     if not row:
@@ -182,7 +183,7 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text="🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazınız.\n\nÖrnek: `/kod 000000`",
+                text="🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazınız.\n\nÖrnek: `/kod 892000`",
                 parse_mode="Markdown"
             )
             if update.effective_chat.type != "private":
@@ -242,7 +243,7 @@ async def cmd_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         await send_grup_secim_menu(user_id, context)
     else:
-        await update.message.reply_text("🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazın. Örnek: `/kod 000000`", parse_mode="Markdown")
+        await update.message.reply_text("🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazın. Örnek: `/kod 892000`", parse_mode="Markdown")
 
 async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT id, title FROM gruplar")
@@ -269,7 +270,7 @@ async def cmd_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text="🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazınız.\n\nÖrnek: `/kod 000000`",
+            text="🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazınız.\n\nÖrnek: `/kod 892000`",
             parse_mode="Markdown"
         )
         if update.effective_chat.type != "private":
@@ -288,55 +289,63 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    if data.startswith("grup_"):
-        internal_id = int(data.replace("grup_", ""))
-        cursor.execute("SELECT chat_id FROM gruplar WHERE id = ?", (internal_id,))
-        row = cursor.fetchone()
-        if row:
-            await show_grup_panel(query, row[0])
-        else:
-            await query.edit_message_text("⚠️ Grup veritabanında bulunamadı.")
-        
-    elif data.startswith("tb_"):
-        chat_id = int(data.replace("tb_", ""))
-        _, _, b_aktif, _, _ = get_grup_ayar(chat_id)
-        yeni_durum = 0 if b_aktif == 1 else 1
-        cursor.execute("UPDATE grup_ayarlari SET buton_aktif = ? WHERE chat_id = ?", (yeni_durum, chat_id))
-        conn.commit()
-        await show_grup_panel(query, chat_id)
-        
-    elif data.startswith("ehg_"):
-        chat_id = int(data.replace("ehg_", ""))
-        cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_hg') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
-        conn.commit()
-        await query.message.reply_text("✍️ Lütfen bu grup için yeni **Hoş Geldin** mesajını yazın:\n(Metinde `{kullanici}` ve `{grup}` kullanabilirsiniz)")
+    try:
+        if data.startswith("grup_"):
+            internal_id = int(data.replace("grup_", ""))
+            cursor.execute("SELECT chat_id FROM gruplar WHERE id = ?", (internal_id,))
+            row = cursor.fetchone()
+            if row:
+                await show_grup_panel(query, row[0])
+            else:
+                await query.edit_message_text("⚠️ Grup veritabanında bulunamadı. Lütfen grupta /reload yazın.")
+            
+        elif data.startswith("tb_"):
+            chat_id = int(data.replace("tb_", ""))
+            _, _, b_aktif, _, _ = get_grup_ayar(chat_id)
+            yeni_durum = 0 if b_aktif == 1 else 1
+            cursor.execute("UPDATE grup_ayarlari SET buton_aktif = ? WHERE chat_id = ?", (yeni_durum, chat_id))
+            conn.commit()
+            await show_grup_panel(query, chat_id)
+            
+        elif data.startswith("ehg_"):
+            chat_id = int(data.replace("ehg_", ""))
+            cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_hg') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
+            conn.commit()
+            await query.message.reply_text("✍️ Lütfen bu grup için yeni **Hoş Geldin** mesajını yazın:\n(Metinde `{kullanici}` ve `{grup}` kullanabilirsiniz)")
 
-    elif data.startswith("ehk_"):
-        chat_id = int(data.replace("ehk_", ""))
-        cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_hk') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
-        conn.commit()
-        await query.message.reply_text("✍️ Lütfen bu grup için yeni **Hoşça Kal** mesajını yazın:\n(Metinde `{kullanici}` ve `{grup}` kullanabilirsiniz)")
+        elif data.startswith("ehk_"):
+            chat_id = int(data.replace("ehk_", ""))
+            cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_hk') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
+            conn.commit()
+            await query.message.reply_text("✍️ Lütfen bu grup için yeni **Hoşça Kal** mesajını yazın:\n(Metinde `{kullanici}` ve `{grup}` kullanabilirsiniz)")
 
-    elif data.startswith("eby_"):
-        chat_id = int(data.replace("eby_", ""))
-        cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_byazisi') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
-        conn.commit()
-        await query.message.reply_text("✍️ Lütfen butonun üzerinde görünecek yeni **yazıyı** gönderin:")
+        elif data.startswith("eby_"):
+            chat_id = int(data.replace("eby_", ""))
+            cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_byazisi') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
+            conn.commit()
+            await query.message.reply_text("✍️ Lütfen butonun üzerinde görünecek yeni **yazıyı** gönderin:")
 
-    elif data.startswith("ebl_"):
-        chat_id = int(data.replace("ebl_", ""))
-        cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_blink') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
-        conn.commit()
-        await query.message.reply_text("✍️ Lütfen butonun açacağı yeni **linki (URL)** gönderin:\n(Örn: `https://t.me/kanaliniz`)")
+        elif data.startswith("ebl_"):
+            chat_id = int(data.replace("ebl_", ""))
+            cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_blink') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
+            conn.commit()
+            await query.message.reply_text("✍️ Lütfen butonun açacağı yeni **linki (URL)** gönderin:\n(Örn: `https://t.me/kanaliniz`)")
 
-    elif data == "back_to_gruplar":
-        cursor.execute("SELECT id, title FROM gruplar")
-        rows = cursor.fetchall()
-        keyboard = []
-        for internal_id, title in rows:
-            keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"grup_{internal_id}")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("⚙️ **Ayar Yapmak İstediğiniz Grubu Seçin:**", reply_markup=reply_markup, parse_mode="Markdown")
+        elif data == "back_to_gruplar":
+            cursor.execute("SELECT id, title FROM gruplar")
+            rows = cursor.fetchall()
+            keyboard = []
+            for internal_id, title in rows:
+                keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"grup_{internal_id}")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text("⚙️ **Ayar Yapmak İstediğiniz Grubu Seçin:**", reply_markup=reply_markup, parse_mode="Markdown")
+
+    except Exception as e:
+        await context.bot.send_message(
+            chat_id=user_id, 
+            text=f"❌ **Sistem Hatası:** Butona tıklanırken bir hata oluştu!\n\n`Hata detayı: {str(e)}`",
+            parse_mode="Markdown"
+        )
 
 async def show_grup_panel(query, chat_id: int):
     cursor.execute("SELECT title FROM gruplar WHERE chat_id = ?", (chat_id,))
