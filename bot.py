@@ -257,7 +257,7 @@ async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE)
     rows = cursor.fetchall()
     
     if not rows:
-        await context.bot.send_message(chat_id=user_id, text="⚠️ Bot henüz kayıtlı bir grup bulamadı. Lütfen grubun içinde herhangi bir mesaj (örneğin `/reload`) atın.")
+        await context.bot.send_message(chat_id=user_id, text="⚠️ Kayıtlı grup bulunamadı.")
         return
 
     keyboard = []
@@ -363,7 +363,11 @@ async def show_grup_panel(query, chat_id: int):
     await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔄 Bot sistemi aktif ve pürüzsüz çalışıyor!")
+    if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
+        kaydet_grup(update.effective_chat.id, update.effective_chat.title)
+        await update.message.reply_text("✅ Grup başarıyla veritabanına kaydoldu ve yenilendi!")
+    else:
+        await update.message.reply_text("🔄 Bot sistemi aktif ve pürüzsüz çalışıyor!")
 
 async def cmd_kurallar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 **Grup Kuralları:**\n1. Küfür ve hakaret yasaktır.\n2. Reklam ve link paylaşımı yasaktır.\n3. Saygılı olun.")
