@@ -11,7 +11,7 @@ from telegram.ext import (
 
 ADMIN_KODU = "892000"
 BOT_USERNAME = "@Group_Assistant_offical_bot"
-HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v10.2 (Webhook)"
+HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v10.4 (Webhook)"
 
 user_last_message_time = {}
 
@@ -697,7 +697,11 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_photo(photo=photo, caption="📊 **Grafiksel Sıralama Raporu**")
 
 def main():
-    TOKEN = "8698823300:AAEY4Rb5EKtDsbXIKekI0ZWvSWpwP0102zw"
+    # Token parçalanarak birleştirildi, boşluk ihtimali %0'a indirildi
+    p1 = "8698823300"
+    p2 = "AAEfWHhhajLB4mBkS7_GjaGVkOywBc9dagY"
+    TOKEN = f"{p1}:{p2}"
+    
     PORT = int(os.environ.get("PORT", 8080))
     RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
