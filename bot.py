@@ -11,7 +11,7 @@ from telegram.ext import (
 
 ADMIN_KODU = "892000"
 BOT_USERNAME = "@Group_Assistant_offical_bot"
-HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v10.1 (Webhook)"
+HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v10.2 (Webhook)"
 
 user_last_message_time = {}
 
@@ -697,9 +697,9 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_photo(photo=photo, caption="📊 **Grafiksel Sıralama Raporu**")
 
 def main():
-    TOKEN = os.getenv("BOT_TOKEN", "8698823300:AAEY4Rb5EKtDsbXIKekI0ZWvSWpwP0102zw").replace(" ", "")
+    TOKEN = "8698823300:AAEY4Rb5EKtDsbXIKekI0ZWvSWpwP0102zw"
     PORT = int(os.environ.get("PORT", 8080))
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL") # Render otomatik verir
+    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -736,7 +736,6 @@ def main():
     print(f"Group Assistant ({BOT_USERNAME}) Webhook Modunda Başlatılıyor...")
 
     if RENDER_URL:
-        # Render üzerinde otomatik webhook kurar
         webhook_url = f"{RENDER_URL}/{TOKEN}"
         app.run_webhook(
             listen="0.0.0.0",
@@ -745,7 +744,6 @@ def main():
             webhook_url=webhook_url
         )
     else:
-        # Eğer Render dışı test ediliyorsa (lokal vb.) standart port dinleme
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
