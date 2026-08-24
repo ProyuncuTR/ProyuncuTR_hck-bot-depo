@@ -1,8 +1,5 @@
 import os
 import sqlite3
-import threading
-import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -12,22 +9,9 @@ from telegram.ext import (
     ChatMemberHandler, CallbackQueryHandler, filters, ContextTypes
 )
 
-class DummyServer(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Group Assistant Aktif")
-
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), DummyServer)
-    server.serve_forever()
-
-threading.Thread(target=run_dummy_server, daemon=True).start()
-
 ADMIN_KODU = "892000"
 BOT_USERNAME = "@Group_Assistant_offical_bot"
-HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v10.0"
+HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v10.1 (Webhook)"
 
 user_last_message_time = {}
 
@@ -202,6 +186,7 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, _, _, _, _, antispam_aktif, kufur_aktif, lock_links, lock_media, lock_stickers = get_grup_ayar(chat_id)
         
         if antispam_aktif == 1:
+            import time
             current_time = time.time()
             key = (chat_id, user_id)
             if key in user_last_message_time:
@@ -671,7 +656,6 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Henüz mesaj kaydı bulunmuyor.")
         return
         
-    # 1. Yazılı (Text) Liderlik Tablosu
     metin_listesi = "🏆 **En Çok Mesaj Atanlar Sıralaması**\n\n"
     for i, (f_name, count) in enumerate(rows, 1):
         temiz_isim = f_name if f_name else "Kullanıcı"
@@ -679,7 +663,6 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(metin_listesi, parse_mode="Markdown")
 
-    # 2. Grafiksel (Matplotlib) Liderlik Tablosu
     names = [row[0][:12] for row in rows]
     counts = [row[1] for row in rows]
     
@@ -714,10 +697,10 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_photo(photo=photo, caption="📊 **Grafiksel Sıralama Raporu**")
 
 def main():
-    TOKEN = os.getenv("BOT_TOKEN")
-    if not TOKEN:
-        TOKEN = "8698823300:AAEY4Rb5EKtDsbXIKekI0ZWvSW pwP0102zw".replace(" ", "")
-        
+    TOKEN = os.getenv("BOT_TOKEN", "8698823300:AAEY4Rb5EKtDsbXIKekI0ZWvSWpwP0102zw").replace(" ", "")
+    PORT = int(os.environ.get("PORT", 8080))
+    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL") # Render otomatik verir
+
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(ChatMemberHandler(bot_grup_durum_takibi, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -750,8 +733,24 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, mesaj_takip))
 
-    print(f"Group Assistant ({BOT_USERNAME}) Bulut Sunucuda Çalışıyor!")
-    app.run_polling(allowed_updates=["chat_member", "my_chat_member", "message", "callback_query"])
+    print(f"Group Assistant ({BOT_USERNAME}) Webhook Modunda Başlatılıyor...")
+
+    if RENDER_URL:
+        # Render üzerinde otomatik webhook kurar
+        webhook_url = f"{RENDER_URL}/{TOKEN}"
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN,
+            webhook_url=webhook_url
+        )
+    else:
+        # Eğer Render dışı test ediliyorsa (lokal vb.) standart port dinleme
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN
+        )
 
 if __name__ == "__main__":
     main()
