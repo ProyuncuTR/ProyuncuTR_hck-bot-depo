@@ -11,7 +11,6 @@ from telegram.ext import (
     ChatMemberHandler, CallbackQueryHandler, filters, ContextTypes
 )
 
-# --- RENDER PORT ZAMAN AŞIMI KORUMASI ---
 class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -25,14 +24,11 @@ def run_dummy_server():
 
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
-# --- AYARLAR ---
-ADMIN_KODU = "890678"
-BUTONLU_GRUPLAR = ["@ProyuncuTR_hck"]
+ADMIN_KODU = "57000"
 KANAL_LINKI = "https://t.me/ProyuncuTR_hck"
 BUTON_YAZISI = "📢 Resmi Kanalımıza Katıl"
 HAKKINDA_METNI = "🤖 **ProyuncuTR_hck Chat Bot**\nVersion v1.3\nBy @ProyuncuTR\n2026 ProyuncuTR_hck chat bot"
 
-# --- VERİTABANI KURULUMU ---
 conn = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -62,21 +58,40 @@ CREATE TABLE IF NOT EXISTS oturumlar (
     son_giris TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS grup_ayarlari (
+    chat_id INTEGER PRIMARY KEY,
+    hosgeldin_mesaj TEXT DEFAULT 'Merhaba {kullanici}!\n\n**{grup}** grubuna hoş geldin! 🎉',
+    hoscakal_mesaj TEXT DEFAULT 'Güle güle {kullanici}! 👋\n\n**{grup}** grubundan ayrıldı.',
+    buton_aktif INTEGER DEFAULT 1
+)
+""")
 conn.commit()
 
-# --- YARDIMCI FONKSİYONLAR ---
 async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     user_id = update.effective_user.id
     cursor.execute("SELECT user_id FROM oturumlar WHERE user_id = ? AND datetime(son_giris, '+24 hours') > datetime('now')", (user_id,))
     if cursor.fetchone():
         return True
-    chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
-    return chat_member.status in ["administrator", "creator"]
+    if update.effective_chat:
+        chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
+        return chat_member.status in ["administrator", "creator"]
+    return False
 
-# --- HOŞ GELDİN VE HOŞÇA KAL SİSTEMİ ---
+def get_grup_ayar(chat_id: int):
+    cursor.execute("SELECT hosgeldin_mesaj, hoscakal_mesaj, buton_aktif FROM grup_ayarlari WHERE chat_id = ?", (chat_id,))
+    row = cursor.fetchone()
+    if not row:
+        cursor.execute("INSERT INTO grup_ayarlari (chat_id) VALUES (?)", (chat_id,))
+        conn.commit()
+        return ('Merhaba {kullanici}!\n\n**{grup}** grubuna hoş geldin! 🎉', 'Güle güle {kullanici}! 👋\n\n**{grup}** grubundan ayrıldı.', 1)
+    return row
+
 async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     grup_adi = update.effective_chat.title or "Grubumuza"
-    chat_username = update.effective_chat.username
+    hosgeldin_fmt, hoscakal_fmt, buton_aktif = get_grup_ayar(chat_id)
     
     uye_geldi = False
     kullanici = None
@@ -97,15 +112,15 @@ async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if uye_geldi and kullanici:
         kullanici_adi = kullanici.mention_html()
-        mesaj = f"Merhaba {kullanici_adi}!\n\n**{grup_adi}** grubuna hoş geldin! 🎉"
+        mesaj = hosgeldin_fmt.replace("{kullanici}", kullanici_adi).replace("{grup}", grup_adi)
         
         reply_markup = None
-        if chat_username and f"@{chat_username}" in BUTONLU_GRUPLAR:
+        if buton_aktif == 1:
             keyboard = [[InlineKeyboardButton(BUTON_YAZISI, url=KANAL_LINKI)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=mesaj,
             parse_mode="HTML",
             reply_markup=reply_markup
@@ -129,14 +144,13 @@ async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if uye_gitti and ayrilan_kullanici:
         kullanici_adi = ayrilan_kullanici.mention_html()
-        gule_gule_mesaji = f"Güle güle {kullanici_adi}! 👋\n\n**{grup_adi}** grubundan ayrıldı."
+        gule_gule_mesaji = hoscakal_fmt.replace("{kullanici}", kullanici_adi).replace("{grup}", grup_adi)
         await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+            chat_id=chat_id,
             text=gule_gule_mesaji,
             parse_mode="HTML"
         )
 
-# --- MESAJ TAKİBİ ---
 async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_chat or not update.effective_user or update.effective_user.is_bot:
         return
@@ -145,7 +159,20 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     username = update.effective_user.username or ""
     full_name = update.effective_user.full_name or "Kullanıcı"
+    metin = update.message.text.lower().strip() if update.message.text else ""
     
+    if metin == "grup ayarları":
+        try:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazınız.\n\nÖrnek: `/kod 000000`",
+                parse_mode="Markdown"
+            )
+            await update.message.reply_text("📩 DM mesajlarına bak! Ayar paneli özel mesaj üzerinden gönderildi.")
+        except Exception:
+            await update.message.reply_text("⚠️ Lütfen önce bota özelden (DM) `/start` yazarak mesaj gönderin.")
+        return
+
     cursor.execute("""
     INSERT INTO mesajlar (chat_id, user_id, username, full_name, mesaj_sayisi)
     VALUES (?, ?, ?, ?, 1)
@@ -156,15 +183,87 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (chat_id, user_id, username, full_name))
     conn.commit()
 
-# --- KOMUTLAR ---
 async def cmd_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if len(context.args) > 0 and context.args[0] == ADMIN_KODU:
-        cursor.execute("INSERT OR REPLACE INTO oturumlar (user_id) VALUES (?)", (user_id,))
+        cursor.execute("INSERT INTO oturumlar (user_id, son_giris) VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET son_giris = CURRENT_TIMESTAMP", (user_id,))
         conn.commit()
-        await update.message.reply_text("✅ Yönetici doğrulaması başarılı! 24 saatlik oturum açıldı.")
+        
+        keyboard = [
+            [InlineKeyboardButton("📢 Kanal Butonu Durumu", callback_data="toggle_button")],
+            [InlineKeyboardButton("📝 Hoş Geldin Mesajı Değiştir", callback_data="info_hg")],
+            [InlineKeyboardButton("📝 Hoşça Kal Mesajı Değiştir", callback_data="info_hk")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("✅ Yönetici doğrulaması başarılı! 24 saatlik oturum açıldı.\n\n⚙️ **Grup Yönetim Paneli**", reply_markup=reply_markup, parse_mode="Markdown")
     else:
-        await update.message.reply_text("🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazın. Örnek: `/kod 890678`", parse_mode="Markdown")
+        await update.message.reply_text("🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazın. Örnek: `/kod 000000`", parse_mode="Markdown")
+
+async def cmd_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazınız.\n\nÖrnek: `/kod 000000`",
+            parse_mode="Markdown"
+        )
+        if update.effective_chat.type != "private":
+            await update.message.reply_text("📩 DM mesajlarına bak! Ayar paneli özel mesaj üzerinden gönderildi.")
+    except Exception:
+        await update.message.reply_text("⚠️ Lütfen önce bota özelden (DM) `/start` yazarak mesaj başlatın.")
+
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    cursor.execute("SELECT user_id FROM oturumlar WHERE user_id = ? AND datetime(son_giris, '+24 hours') > datetime('now')", (user_id,))
+    if not cursor.fetchone():
+        await query.edit_message_text("⚠️ Oturumunuzun süresi dolmuş. Lütfen tekrar `/kod` kullanın.")
+        return
+
+    chat_id = query.message.chat_id
+    _, _, buton_aktif = get_grup_ayar(chat_id)
+
+    if query.data == "toggle_button":
+        yeni_durum = 0 if buton_aktif == 1 else 1
+        cursor.execute("UPDATE grup_ayarlari SET buton_aktif = ? WHERE chat_id = ?", (yeni_durum, chat_id))
+        conn.commit()
+        
+        durum_str = "AÇIK 🟢" if yeni_durum == 1 else "KAPALI 🔴"
+        keyboard = [
+            [InlineKeyboardButton(f"Kanal Butonu: {durum_str}", callback_data="toggle_button")],
+            [InlineKeyboardButton("📝 Hoş Geldin Mesajı Değiştir", callback_data="info_hg")],
+            [InlineKeyboardButton("📝 Hoşça Kal Mesajı Değiştir", callback_data="info_hk")]
+        ]
+        await query.edit_message_text("⚙️ **Grup Yönetim Paneli**\n\nKanal butonu durumu güncellendi!", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        
+    elif query.data == "info_hg":
+        await query.message.reply_text("💡 Hoş geldin mesajını değiştirmek için komut kullanımı:\n`/hosgeldin_set Merhaba {kullanici}! {grup} grubuna hoş geldin.`", parse_mode="Markdown")
+    elif query.data == "info_hk":
+        await query.message.reply_text("💡 Hoşça kal mesajını değiştirmek için komut kullanımı:\n`/hoscakal_set Güle güle {kullanici}! {grup} grubundan ayrıldı.`", parse_mode="Markdown")
+
+async def cmd_set_hosgeldin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+    yeni_metin = " ".join(context.args)
+    if not yeni_metin:
+        await update.message.reply_text("Lütfen yeni metni yazın. Örnek:\n`/hosgeldin_set Merhaba {kullanici}! {grup} grubuna hoş geldin.`", parse_mode="Markdown")
+        return
+    cursor.execute("UPDATE grup_ayarlari SET hosgeldin_mesaj = ? WHERE chat_id = ?", (yeni_metin, update.effective_chat.id))
+    conn.commit()
+    await update.message.reply_text("✅ Bu grubun karşılama mesajı başarıyla güncellendi!")
+
+async def cmd_set_hoscakal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+    yeni_metin = " ".join(context.args)
+    if not yeni_metin:
+        await update.message.reply_text("Lütfen yeni metni yazın. Örnek:\n`/hoscakal_set Güle güle {kullanici}! {grup} grubundan ayrıldı.`", parse_mode="Markdown")
+        return
+    cursor.execute("UPDATE grup_ayarlari SET hoscakal_mesaj = ? WHERE chat_id = ?", (yeni_metin, update.effective_chat.id))
+    conn.commit()
+    await update.message.reply_text("✅ Bu grubun uğurlama mesajı başarıyla güncellendi!")
 
 async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Bot sistemi aktif ve pürüzsüz çalışıyor!")
@@ -260,7 +359,6 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     await update.message.reply_text(metin, parse_mode="Markdown")
 
-# --- MAIN ---
 def main():
     TOKEN = os.getenv("BOT_TOKEN")
     if not TOKEN:
@@ -273,6 +371,9 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, uye_durum_takibi))
 
     app.add_handler(CommandHandler("kod", cmd_kod))
+    app.add_handler(CommandHandler("panel", cmd_panel))
+    app.add_handler(CommandHandler("hosgeldin_set", cmd_set_hosgeldin))
+    app.add_handler(CommandHandler("hoscakal_set", cmd_set_hoscakal))
     app.add_handler(CommandHandler("reload", cmd_reload))
     app.add_handler(CommandHandler("kurallar", cmd_kurallar))
     app.add_handler(CommandHandler("hakkinda", cmd_hakkinda))
@@ -283,11 +384,12 @@ def main():
     app.add_handler(CommandHandler("ban", cmd_ban))
     app.add_handler(CommandHandler("unban", cmd_unban))
     app.add_handler(CommandHandler(["tum", "siralama", "gunluk", "haftalik", "aylik"], cmd_siralama))
-
+    
+    app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mesaj_takip))
 
     print("Bulut Sunucu Botu Başarıyla Çalışıyor!")
-    app.run_polling(allowed_updates=["chat_member", "message"])
+    app.run_polling(allowed_updates=["chat_member", "message", "callback_query"])
 
 if __name__ == "__main__":
     main()
