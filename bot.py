@@ -262,7 +262,7 @@ async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE)
 
     keyboard = []
     for cid, title in rows:
-        keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"select_grup_{cid}")])
+        keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"sg_{cid}")])
         
     reply_markup = InlineKeyboardMarkup(keyboard)
     await context.bot.send_message(
@@ -296,38 +296,38 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    if data.startswith("select_grup_"):
-        chat_id = int(data.replace("select_grup_", ""))
+    if data.startswith("sg_"):
+        chat_id = int(data.replace("sg_", ""))
         await show_grup_panel(query, chat_id)
         
-    elif data.startswith("toggle_button_"):
-        chat_id = int(data.replace("toggle_button_", ""))
+    elif data.startswith("tb_"):
+        chat_id = int(data.replace("tb_", ""))
         _, _, b_aktif, _, _ = get_grup_ayar(chat_id)
         yeni_durum = 0 if b_aktif == 1 else 1
         cursor.execute("UPDATE grup_ayarlari SET buton_aktif = ? WHERE chat_id = ?", (yeni_durum, chat_id))
         conn.commit()
         await show_grup_panel(query, chat_id)
         
-    elif data.startswith("edit_hg_"):
-        chat_id = int(data.replace("edit_hg_", ""))
+    elif data.startswith("ehg_"):
+        chat_id = int(data.replace("ehg_", ""))
         cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_hg') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
         conn.commit()
         await query.message.reply_text("✍️ Lütfen bu grup için yeni **Hoş Geldin** mesajını yazın:\n(Metinde `{kullanici}` ve `{grup}` kullanabilirsiniz)")
 
-    elif data.startswith("edit_hk_"):
-        chat_id = int(data.replace("edit_hk_", ""))
+    elif data.startswith("ehk_"):
+        chat_id = int(data.replace("ehk_", ""))
         cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_hk') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
         conn.commit()
         await query.message.reply_text("✍️ Lütfen bu grup için yeni **Hoşça Kal** mesajını yazın:\n(Metinde `{kullanici}` ve `{grup}` kullanabilirsiniz)")
 
-    elif data.startswith("edit_byazisi_"):
-        chat_id = int(data.replace("edit_byazisi_", ""))
+    elif data.startswith("eby_"):
+        chat_id = int(data.replace("eby_", ""))
         cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_byazisi') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
         conn.commit()
         await query.message.reply_text("✍️ Lütfen butonun üzerinde görünecek yeni **yazıyı** gönderin:")
 
-    elif data.startswith("edit_blink_"):
-        chat_id = int(data.replace("edit_blink_", ""))
+    elif data.startswith("ebl_"):
+        chat_id = int(data.replace("ebl_", ""))
         cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_blink') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
         conn.commit()
         await query.message.reply_text("✍️ Lütfen butonun açacağı yeni **linki (URL)** gönderin:\n(Örn: `https://t.me/kanaliniz`)")
@@ -337,7 +337,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rows = cursor.fetchall()
         keyboard = []
         for cid, title in rows:
-            keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"select_grup_{cid}")])
+            keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"sg_{cid}")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("⚙️ **Ayar Yapmak İstediğiniz Grubu Seçin:**", reply_markup=reply_markup, parse_mode="Markdown")
 
@@ -350,11 +350,11 @@ async def show_grup_panel(query, chat_id: int):
     durum_str = "AÇIK 🟢" if b_aktif == 1 else "KAPALI 🔴"
     
     keyboard = [
-        [InlineKeyboardButton(f"🔘 Buton Durumu: {durum_str}", callback_data=f"toggle_button_{chat_id}")],
-        [InlineKeyboardButton("✏️ Hoş Geldin Mesajını Düzenle", callback_data=f"edit_hg_{chat_id}")],
-        [InlineKeyboardButton("✏️ Hoşça Kal Mesajını Düzenle", callback_data=f"edit_hk_{chat_id}")],
-        [InlineKeyboardButton(f"✏️ Buton Yazısı ({b_yazisi})", callback_data=f"edit_byazisi_{chat_id}")],
-        [InlineKeyboardButton("🔗 Buton Linkini Düzenle", callback_data=f"edit_blink_{chat_id}")],
+        [InlineKeyboardButton(f"🔘 Buton Durumu: {durum_str}", callback_data=f"tb_{chat_id}")],
+        [InlineKeyboardButton("✏️ Hoş Geldin Mesajını Düzenle", callback_data=f"ehg_{chat_id}")],
+        [InlineKeyboardButton("✏️ Hoşça Kal Mesajını Düzenle", callback_data=f"ehk_{chat_id}")],
+        [InlineKeyboardButton(f"✏️ Buton Yazısı ({b_yazisi})", callback_data=f"eby_{chat_id}")],
+        [InlineKeyboardButton("🔗 Buton Linkini Düzenle", callback_data=f"ebl_{chat_id}")],
         [InlineKeyboardButton("🔙 Grup Listesine Dön", callback_data="back_to_gruplar")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -365,9 +365,7 @@ async def show_grup_panel(query, chat_id: int):
 async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
         kaydet_grup(update.effective_chat.id, update.effective_chat.title)
-        await update.message.reply_text("✅ Grup başarıyla veritabanına kaydoldu ve yenilendi!")
-    else:
-        await update.message.reply_text("🔄 Bot sistemi aktif ve pürüzsüz çalışıyor!")
+    await update.message.reply_text("🔄 Bot yeniden başlatıldı! Yönetici listesi ve veritabanı güncellendi!")
 
 async def cmd_kurallar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📜 **Grup Kuralları:**\n1. Küfür ve hakaret yasaktır.\n2. Reklam ve link paylaşımı yasaktır.\n3. Saygılı olun.")
