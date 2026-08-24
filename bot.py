@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -8,6 +10,20 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, 
     ChatMemberHandler, CallbackQueryHandler, filters, ContextTypes
 )
+
+# --- RENDER PORT ZAMAN AŞIMI KORUMASI ---
+class DummyServer(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot Aktif")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyServer)
+    server.serve_forever()
+
+threading.Thread(target=run_dummy_server, daemon=True).start()
 
 # --- AYARLAR ---
 ADMIN_KODU = "890678"
