@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS oturumlar (
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS gruplar (
-    chat_id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER UNIQUE,
     title TEXT
 )
 """)
@@ -142,12 +143,7 @@ async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton(b_yazisi, url=b_linki)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=mesaj,
-            parse_mode="HTML",
-            reply_markup=reply_markup
-        )
+        await context.bot.send_message(chat_id=chat_id, text=mesaj, parse_mode="HTML", reply_markup=reply_markup)
         return
 
     uye_gitti = False
@@ -168,11 +164,7 @@ async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uye_gitti and ayrilan_kullanici:
         kullanici_adi = ayrilan_kullanici.mention_html()
         gule_gule_mesaji = hoscakal_fmt.replace("{kullanici}", kullanici_adi).replace("{grup}", grup_adi)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=gule_gule_mesaji,
-            parse_mode="HTML"
-        )
+        await context.bot.send_message(chat_id=chat_id, text=gule_gule_mesaji, parse_mode="HTML")
 
 async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_chat or not update.effective_user or update.effective_user.is_bot:
@@ -253,7 +245,7 @@ async def cmd_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazın. Örnek: `/kod 000000`", parse_mode="Markdown")
 
 async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    cursor.execute("SELECT chat_id, title FROM gruplar")
+    cursor.execute("SELECT id, title FROM gruplar")
     rows = cursor.fetchall()
     
     if not rows:
@@ -261,8 +253,8 @@ async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE)
         return
 
     keyboard = []
-    for cid, title in rows:
-        keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"sg_{cid}")])
+    for internal_id, title in rows:
+        keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"grup_{internal_id}")])
         
     reply_markup = InlineKeyboardMarkup(keyboard)
     await context.bot.send_message(
@@ -296,9 +288,14 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    if data.startswith("sg_"):
-        chat_id = int(data.replace("sg_", ""))
-        await show_grup_panel(query, chat_id)
+    if data.startswith("grup_"):
+        internal_id = int(data.replace("grup_", ""))
+        cursor.execute("SELECT chat_id FROM gruplar WHERE id = ?", (internal_id,))
+        row = cursor.fetchone()
+        if row:
+            await show_grup_panel(query, row[0])
+        else:
+            await query.edit_message_text("⚠️ Grup veritabanında bulunamadı.")
         
     elif data.startswith("tb_"):
         chat_id = int(data.replace("tb_", ""))
@@ -333,11 +330,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("✍️ Lütfen butonun açacağı yeni **linki (URL)** gönderin:\n(Örn: `https://t.me/kanaliniz`)")
 
     elif data == "back_to_gruplar":
-        cursor.execute("SELECT chat_id, title FROM gruplar")
+        cursor.execute("SELECT id, title FROM gruplar")
         rows = cursor.fetchall()
         keyboard = []
-        for cid, title in rows:
-            keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"sg_{cid}")])
+        for internal_id, title in rows:
+            keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"grup_{internal_id}")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("⚙️ **Ayar Yapmak İstediğiniz Grubu Seçin:**", reply_markup=reply_markup, parse_mode="Markdown")
 
