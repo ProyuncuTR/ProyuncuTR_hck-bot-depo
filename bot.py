@@ -16,7 +16,7 @@ class DummyServer(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Group Assistant Pro Aktif")
+        self.wfile.write(b"Group Assistant Aktif")
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
@@ -26,15 +26,15 @@ def run_dummy_server():
 threading.Thread(target=run_dummy_server, daemon=True).start()
 
 ADMIN_KODU = "892000"
-BOT_USERNAME = "@Group_Assistant_bot"
-HAKKINDA_METNI = f"🤖 **Group Assistant Pro**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Family Security Bot\nVersion v6.0\nBy @ProyuncuTR\n2026 Group Assistant"
+BOT_USERNAME = "@Group_Assistant_offical_bot"
+HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v10.0"
 
 user_last_message_time = {}
 
 conn = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Veritabanı Tabloları
+# Tablolar
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS mesajlar (
     chat_id INTEGER,
@@ -191,7 +191,10 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+    full_name = user.full_name or "Kullanıcı"
+    username = user.username or ""
     
     if update.effective_chat.type in ["group", "supergroup"]:
         kaydet_grup(chat_id, update.effective_chat.title)
@@ -213,7 +216,7 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if lock_media == 1 and (update.message.photo or update.message.video or update.message.document):
             try:
                 await update.message.delete()
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {update.effective_user.mention_html()}, bu grupta medya paylaşımı yasaktır!", parse_mode="HTML")
+                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {user.mention_html()}, bu grupta medya paylaşımı yasaktır!", parse_mode="HTML")
                 return
             except Exception:
                 pass
@@ -231,7 +234,7 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if lock_links == 1 and ("http://" in metin or "https://" in metin or "t.me/" in metin):
             try:
                 await update.message.delete()
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {update.effective_user.mention_html()}, bu grupta link paylaşımı yasaktır!", parse_mode="HTML")
+                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {user.mention_html()}, bu grupta link paylaşımı yasaktır!", parse_mode="HTML")
                 return
             except Exception:
                 pass
@@ -240,7 +243,7 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if kufur_aktif == 1 and any(k in metin for k in yasakli_kelimeler):
             try:
                 await update.message.delete()
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {update.effective_user.mention_html()}, küfür etmek yasaktır!", parse_mode="HTML")
+                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {user.mention_html()}, küfür etmek yasaktır!", parse_mode="HTML")
                 return
             except Exception:
                 pass
@@ -304,22 +307,24 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mesaj_sayisi = mesaj_sayisi + 1,
             username = excluded.username,
             full_name = excluded.full_name
-        """, (chat_id, user_id, update.effective_user.username or "", update.effective_user.full_name or "Kullanıcı"))
+        """, (chat_id, user_id, username, full_name))
         conn.commit()
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     keyboard = [
-        [InlineKeyboardButton("📢 Resmi Kanal", url="https://t.me/ProyuncuTR_hck")],
-        [InlineKeyboardButton("💝 Anne/Aile Rehberi", callback_data="anne_rehberi")],
-        [InlineKeyboardButton("⚙️ Yönetim Paneli Bilgisi", callback_data="start_panel_info")]
+        [InlineKeyboardButton("➕ Beni Gruba Ekle", url=f"https://t.me/{BOT_USERNAME.replace('@','')}?startgroup=true")],
+        [InlineKeyboardButton("⚙️ Yönetim Paneli", callback_data="start_panel_info")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     text = (
-        f"👋 Merhaba **{user.full_name}**!\n\n"
-        f"🤖 Ben **Group Assistant Pro** (`{BOT_USERNAME}`). Aile gruplarınızı, okul sınıflarınızı veya topluluklarınızı korumak ve yönetmek için tasarlandım.\n\n"
-        f"✨ Beni grubunuza ekleyip **Yönetici** yapabilir, anne ve aile gruplarınızda tam güvenlik sağlayabilirsiniz!"
+        f"🤖 **Group Assistant**\n\n"
+        f"Merhaba **{user.full_name}**! Ben profesyonel bir grup yönetim ve koruma asistanıyım.\n\n"
+        f"• Gelişmiş Anti-Spam ve Küfür Koruması\n"
+        f"• Medya, Sticker ve Link Filtreleri\n"
+        f"• Özel Notlar ve Detaylı Liderlik İstatistikleri\n\n"
+        f"Beni grubunuza ekleyip **Yönetici** yaparak hemen kullanmaya başlayabilirsiniz."
     )
     await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
 
@@ -330,14 +335,14 @@ async def cmd_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         await send_grup_secim_menu(user_id, context)
     else:
-        await update.message.reply_text("🔐 **Group Assistant Doğrulama:** Lütfen doğru kodu yazın. Örnek: `/kod 892000`", parse_mode="Markdown")
+        await update.message.reply_text("🔐 **Yönetici Doğrulaması:** Lütfen doğru kodu yazın.\nÖrnek: `/kod 892000`", parse_mode="Markdown")
 
 async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("SELECT id, title FROM gruplar")
     rows = cursor.fetchall()
     
     if not rows:
-        await context.bot.send_message(chat_id=user_id, text="⚠️ Kayıtlı grup bulunamadı. Lütfen botun olduğu bir grupta `/reload` yazın.")
+        await context.bot.send_message(chat_id=user_id, text="⚠️ Kayıtlı grup bulunamadı. Botun olduğu grupta `/reload` yazın.")
         return
 
     keyboard = []
@@ -347,7 +352,7 @@ async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
     await context.bot.send_message(
         chat_id=user_id,
-        text="🤖 **Group Assistant Pro Yönetim Paneli**\n\n⚙️ Ayar Yapmak İstediğiniz Grubu Seçin:",
+        text="⚙️ **Yönetim Paneli**\n\nAyar yapmak istediğiniz grubu seçin:",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -357,13 +362,13 @@ async def cmd_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=user_id,
-            text="🔐 **Group Assistant Doğrulama:**\n\nÖrnek: `/kod 892000`",
+            text="🔐 **Yönetici Doğrulaması:**\n\nÖrnek: `/kod 892000`",
             parse_mode="Markdown"
         )
         if update.effective_chat.type != "private":
-            await update.message.reply_text("📩 DM mesajlarına bak! Panel özel mesaj üzerinden gönderildi.")
+            await update.message.reply_text("📩 Ayar paneli özel mesaj (DM) üzerinden gönderildi.")
     except Exception:
-        await update.message.reply_text("⚠️ Lütfen önce bota özelden (DM) `/start` yazarak başlatın.")
+        await update.message.reply_text("⚠️ Lütfen önce bota özelden (DM) `/start` yazarak sohbeti başlatın.")
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -373,24 +378,11 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "start_panel_info":
-        await query.message.reply_text("💡 Ayar paneline erişmek için grubunuzda veya buradan `/panel` komutunu yazıp ardından `/kod 892000` kullanabilirsiniz.")
-        return
-
-    if data == "anne_rehberi":
-        rehber_metni = (
-            "💝 **Anneler ve Aile Grupları İçin Özel Asistan Rehberi**\n\n"
-            "Değerli annelerimiz ve aileler için grubu güvenli tutmak çok önemlidir. Bu bot sayesinde:\n\n"
-            "1. **Küfür Filtresi (Aktif):** Grupta argo veya küfür yazıldığında bot mesajı anında siler.\n"
-            "2. **Link Engeli (Lock Links):** Reklam veya zararlı linklerin paylaşılmasını engeller.\n"
-            "3. **Sticker/Medya Engeli:** İstenmeyen hareketli çıkartma veya görselleri engeller.\n"
-            "4. **Özel Notlar (`/not kural`):** Aile kurallarını veya önemli duyuruları sabitlemeden `setnot` ile kaydedip herkesin tek komutla okumasını sağlayabilirsiniz.\n\n"
-            "Gönül rahatlığıyla kullanabilirsiniz! 🌷"
-        )
-        await query.message.reply_text(rehber_metni, parse_mode="Markdown")
+        await query.message.reply_text("💡 Ayar paneline erişmek için `/panel` komutunu yazıp ardından `/kod 892000` kullanabilirsiniz.")
         return
 
     if not await is_admin(user_id):
-        await query.edit_message_text("⚠️ Oturumunuzun süresi dolmuş. Lütfen tekrar `/kod 892000` kullanın.")
+        await query.edit_message_text("⚠️ Oturum süresi dolmuş. Lütfen tekrar `/kod 892000` kullanın.")
         return
 
     try:
@@ -474,7 +466,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for internal_id, title in rows:
                 keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"grup_{internal_id}")])
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("⚙️ **Ayar Yapmak İstediğiniz Grubu Seçin:**", reply_markup=reply_markup, parse_mode="Markdown")
+            await query.edit_message_text("⚙️ **Yönetim Paneli**\n\nAyar yapmak istediğiniz grubu seçin:", reply_markup=reply_markup, parse_mode="Markdown")
 
     except Exception as e:
         await context.bot.send_message(chat_id=user_id, text=f"❌ Hata: {str(e)}")
@@ -494,7 +486,7 @@ async def show_grup_panel(query, chat_id: int):
     keyboard = [
         [InlineKeyboardButton(f"🔘 Hoş Geldin Butonu: {durum_str}", callback_data=f"tb_{chat_id}")],
         [InlineKeyboardButton(f"🛡️ Küfür Filtresi: {kufur_str}", callback_data=f"tkufur_{chat_id}")],
-        [InlineKeyboardButton(f"🔗 Link Engeli (Lock): {link_str}", callback_data=f"tlink_{chat_id}")],
+        [InlineKeyboardButton(f"🔗 Link Engeli: {link_str}", callback_data=f"tlink_{chat_id}")],
         [InlineKeyboardButton(f"🖼️ Medya Engeli: {medya_str}", callback_data=f"tmedia_{chat_id}")],
         [InlineKeyboardButton(f"🎭 Sticker Engeli: {sticker_str}", callback_data=f"tsticker_{chat_id}")],
         [InlineKeyboardButton("✏️ Hoş Geldin Mesajını Düzenle", callback_data=f"ehg_{chat_id}")],
@@ -505,29 +497,19 @@ async def show_grup_panel(query, chat_id: int):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    text = f"⚙️ **{title}** - Group Assistant Pro Panel\n\n- Buton Link: {b_linki}\n- Buton Yazı: {b_yazisi}"
+    text = f"⚙️ **{title}** - Grup Yönetim Paneli\n\n- Buton Link: {b_linki}\n- Buton Yazı: {b_yazisi}"
     await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")
 
 async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
         kaydet_grup(update.effective_chat.id, update.effective_chat.title)
-    await update.message.reply_text(f"🔄 **Group Assistant Pro** ({BOT_USERNAME}) güncellendi ve veritabanı tazelendi!")
+    await update.message.reply_text("🔄 Grup verileri ve bot durumu tazelendi.")
 
 async def cmd_kurallar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📜 **Grup Kuralları:**\n1. Küfür, hakaret ve argo kesinlikle yasaktır.\n2. İzinsiz reklam ve link paylaşımı yasaktır.\n3. Herkese saygılı olun.")
+    await update.message.reply_text("📜 **Grup Kuralları:**\n1. Küfür, hakaret ve argo yasaktır.\n2. İzinsiz reklam ve link paylaşımı yasaktır.\n3. Herkese saygılı olun.")
 
 async def cmd_hakkinda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(HAKKINDA_METNI, parse_mode="Markdown")
-
-async def cmd_anne(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    anne_metni = (
-        "🌷 **Anne & Aile Grubu Güvenlik Rehberi**\n\n"
-        "Bu bot; evlatlarınızın, aile üyelerinizin bulunduğu gruplarda huzuru sağlamak için özelleştirilmiştir.\n"
-        "• Küfürler anında silinir.\n"
-        "• Reklam linkleri engellenir.\n"
-        "• `/not kurallar` diyerek aile kurallarınızı sabitlemeden gruba öğretebilirsiniz."
-    )
-    await update.message.reply_text(anne_metni, parse_mode="Markdown")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
@@ -623,7 +605,7 @@ async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.ban_chat_member(chat_id, target_user.id)
         await update.message.reply_text(f"🚫 {target_user.mention_html()} 3 uyarı sınırını aştığı için yasaklandı!", parse_mode="HTML")
     else:
-        await update.message.reply_text(f"⚠️ {target_user.mention_html()} uyarldı! (Toplam: {sayi}/3)", parse_mode="HTML")
+        await update.message.reply_text(f"⚠️ {target_user.mention_html()} uyarıldı! (Toplam: {sayi}/3)", parse_mode="HTML")
 
 async def cmd_unwarn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(update.effective_user.id):
@@ -689,6 +671,15 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Henüz mesaj kaydı bulunmuyor.")
         return
         
+    # 1. Yazılı (Text) Liderlik Tablosu
+    metin_listesi = "🏆 **En Çok Mesaj Atanlar Sıralaması**\n\n"
+    for i, (f_name, count) in enumerate(rows, 1):
+        temiz_isim = f_name if f_name else "Kullanıcı"
+        metin_listesi += f"{i}. **{temiz_isim}** — `{count}` mesaj\n"
+    
+    await update.message.reply_text(metin_listesi, parse_mode="Markdown")
+
+    # 2. Grafiksel (Matplotlib) Liderlik Tablosu
     names = [row[0][:12] for row in rows]
     counts = [row[1] for row in rows]
     
@@ -711,7 +702,7 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ax.text(width + 0.5, bar.get_y() + bar.get_height()/2, f'{int(width)}', 
                 va='center', ha='left', color='#00adb5', fontsize=10, fontweight='bold')
 
-    plt.title(f'🏆 Group Assistant Pro - Liderlik Tablosu', fontsize=14, color='#eeeeee', pad=15, fontweight='bold')
+    plt.title('🏆 Mesaj İstatistikleri Grafiği', fontsize=14, color='#eeeeee', pad=15, fontweight='bold')
     plt.xlabel('Mesaj Sayısı', fontsize=11, color='#cccccc')
     plt.tight_layout()
     
@@ -720,12 +711,12 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plt.close()
     
     with open(chart_path, 'rb') as photo:
-        await update.message.reply_photo(photo=photo, caption=f"📊 **Group Assistant Pro Liderlik Tablosu** ({BOT_USERNAME})", parse_mode="Markdown")
+        await update.message.reply_photo(photo=photo, caption="📊 **Grafiksel Sıralama Raporu**")
 
 def main():
     TOKEN = os.getenv("BOT_TOKEN")
     if not TOKEN:
-        TOKEN = "8823945672:AAHnfiT2s2PR3Vt4o_8xD6ro3tgrs5T1RMk"
+        TOKEN = "8698823300:AAEY4Rb5EKtDsbXIKekI0ZWvSW pwP0102zw".replace(" ", "")
         
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -740,7 +731,6 @@ def main():
     app.add_handler(CommandHandler("reload", cmd_reload))
     app.add_handler(CommandHandler("kurallar", cmd_kurallar))
     app.add_handler(CommandHandler("hakkinda", cmd_hakkinda))
-    app.add_handler(CommandHandler("anne", cmd_anne))
     app.add_handler(CommandHandler("id", cmd_id))
     app.add_handler(CommandHandler("setnot", cmd_setnot))
     app.add_handler(CommandHandler("not", cmd_not))
@@ -760,7 +750,7 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, mesaj_takip))
 
-    print(f"Group Assistant Pro v6.0 ({BOT_USERNAME}) Bulut Sunucuda Çalışıyor!")
+    print(f"Group Assistant ({BOT_USERNAME}) Bulut Sunucuda Çalışıyor!")
     app.run_polling(allowed_updates=["chat_member", "my_chat_member", "message", "callback_query"])
 
 if __name__ == "__main__":
