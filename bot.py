@@ -1,5 +1,8 @@
 import os
 import sqlite3
+import threading
+import http.server
+import socketserver
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -9,9 +12,32 @@ from telegram.ext import (
     ChatMemberHandler, CallbackQueryHandler, filters, ContextTypes
 )
 
+# Render'ın port isteğini karşılamak için arka planda dummy HTTP sunucusu
+PORT = int(os.environ.get("PORT", 8080))
+
+class DummyHandler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write(b"Group Assistant Bot is running smoothly!")
+
+def run_dummy_server():
+    try:
+        with socketserver.TCPServer(("0.0.0.0", PORT), DummyHandler) as httpd:
+            print(f"Dummy HTTP server running on port {PORT}")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"Dummy server error: {e}")
+
+# Token parçalanarak boşluk riski sıfırlandı
+p1 = "8698823300"
+p2 = "AAEfWHhhajLB4mBkS7_GjaGVkOywBc9dagY"
+TOKEN = f"{p1}:{p2}"
+
 ADMIN_KODU = "892000"
 BOT_USERNAME = "@Group_Assistant_offical_bot"
-HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v10.4 (Webhook)"
+HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v11.1 (Polling + Port Fix)"
 
 user_last_message_time = {}
 
@@ -697,13 +723,9 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_photo(photo=photo, caption="📊 **Grafiksel Sıralama Raporu**")
 
 def main():
-    # Token parçalanarak birleştirildi, boşluk ihtimali %0'a indirildi
-    p1 = "8698823300"
-    p2 = "AAEfWHhhajLB4mBkS7_GjaGVkOywBc9dagY"
-    TOKEN = f"{p1}:{p2}"
-    
-    PORT = int(os.environ.get("PORT", 8080))
-    RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL")
+    # 1. Adım: Dummy HTTP sunucusunu ayrı bir arka plan thread'inde (iş parçacığında) başlat
+    server_thread = threading.Thread(target=run_dummy_server, daemon=True)
+    server_thread.start()
 
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -737,22 +759,10 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, mesaj_takip))
 
-    print(f"Group Assistant ({BOT_USERNAME}) Webhook Modunda Başlatılıyor...")
-
-    if RENDER_URL:
-        webhook_url = f"{RENDER_URL}/{TOKEN}"
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=webhook_url
-        )
-    else:
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN
-        )
+    print(f"Group Assistant ({BOT_USERNAME}) Polling Modunda ve Port Kilidi Açık Olarak Başlatılıyor...")
+    
+    # 2. Adım: Polling ile Telegram'ı sürekli dinle
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
