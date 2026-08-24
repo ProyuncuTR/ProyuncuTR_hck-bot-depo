@@ -452,11 +452,38 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Henüz mesaj kaydı bulunmuyor.")
         return
         
-    metin = "🏆 **En Çok Mesaj Atanlar Sıralaması:**\n\n"
-    for idx, (name, count) in enumerate(rows, start=1):
-        metin += f"{idx}. {name} - {count} mesaj\n"
-        
-    await update.message.reply_text(metin, parse_mode="Markdown")
+    names = [row[0][:12] for row in rows]
+    counts = [row[1] for row in rows]
+    
+    plt.style.use('dark_background')
+    fig, ax = plt.subplots(figsize=(8, 5))
+    fig.patch.set_facecolor('#121212')
+    ax.set_facecolor('#1e1e1e')
+    
+    bars = ax.barh(names[::-1], counts[::-1], color='#00adb5', edgecolor='#393e46', height=0.6, linewidth=1.2)
+    
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#555555')
+    ax.spines['bottom'].set_color('#555555')
+    ax.tick_params(colors='#ffffff', labelsize=10)
+    ax.grid(axis='x', linestyle='--', alpha=0.2, color='#aaaaaa')
+    
+    for bar in bars:
+        width = bar.get_width()
+        ax.text(width + 0.5, bar.get_y() + bar.get_height()/2, f'{int(width)}', 
+                va='center', ha='left', color='#00adb5', fontsize=10, fontweight='bold')
+
+    plt.title('🏆 En Çok Mesaj Atanlar Sıralaması', fontsize=14, color='#eeeeee', pad=15, fontweight='bold')
+    plt.xlabel('Mesaj Sayısı', fontsize=11, color='#cccccc')
+    plt.tight_layout()
+    
+    chart_path = 'siralama.png'
+    plt.savefig(chart_path, dpi=200, facecolor=fig.get_facecolor(), edgecolor='none')
+    plt.close()
+    
+    with open(chart_path, 'rb') as photo:
+        await update.message.reply_photo(photo=photo, caption="📊 **Güncel Mesaj Sıralaması Grafiği**", parse_mode="Markdown")
 
 def main():
     TOKEN = os.getenv("BOT_TOKEN")
