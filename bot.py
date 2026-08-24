@@ -1,370 +1,277 @@
-from datetime import datetime, timedelta
 import os
-import re
 import sqlite3
-import io
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, 
+    ChatMemberHandler, CallbackQueryHandler, filters, ContextTypes
+)
 
-from telegram import Update, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, ChatMemberHandler, CommandHandler, MessageHandler, ContextTypes, filters
-
-TOKEN = "8823945672:AAHnfiT2s2PR3Vt4o_8xD6ro3tgrs5T1RMk"
-
+# --- AYARLAR ---
 ADMIN_KODU = "890678"
-BEKLEYEN_ADMINLER = set()
-ADMIN_OTURUMLARI = {}
+BUTONLU_GRUPLAR = ["@ProyuncuTR_hck"]
+KANAL_LINKI = "https://t.me/ProyuncuTR_hck"
+BUTON_YAZISI = "📢 Resmi Kanalımıza Katıl"
+HAKKINDA_METNI = "🤖 **ProyuncuTR_hck Chat Bot**\nVersion v1.3\nBy @ProyuncuTR\n2026 ProyuncuTR_hck chat bot"
 
-def veritabani_kur():
-    conn = sqlite3.connect("bot_data.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS kullanicilar (
-            uid INTEGER PRIMARY KEY,
-            name TEXT,
-            username TEXT,
-            gunluk INTEGER DEFAULT 0,
-            haftalik INTEGER DEFAULT 0,
-            aylik INTEGER DEFAULT 0,
-            toplam INTEGER DEFAULT 0,
-            uyari INTEGER DEFAULT 0
-        )
-    """)
-    conn.commit()
-    conn.close()
+# --- VERİTABANI KURULUMU ---
+conn = sqlite3.connect("bot_data.db", check_same_thread=False)
+cursor = conn.cursor()
 
-veritabani_kur()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS mesajlar (
+    chat_id INTEGER,
+    user_id INTEGER,
+    username TEXT,
+    full_name TEXT,
+    mesaj_sayisi INTEGER DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id)
+)
+""")
 
-KUFUR_LISTESI = ["amk", "aq", "sik", "piç", "yarrak", "orospu", "ibne", "göt"]
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS uyarilar (
+    chat_id INTEGER,
+    user_id INTEGER,
+    uyari_sayisi INTEGER DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id)
+)
+""")
 
-KURALLAR_METNI = """📜 ProyuncuTR_hck Sohbet Grup Kuralları / Chat Group Rules
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS oturumlar (
+    user_id INTEGER PRIMARY KEY,
+    son_giris TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
+conn.commit()
 
-🇹🇷 Türkçe Kurallar:
-1️⃣ Küfür/Argo kelimeler kesinlikle yasaktır. 3 uyarı alırsanız banlanırsınız.
-2️⃣ Link göndermek otomatik olarak mesaj gönderme özelliğinizin kapatılmasına (mute) sebep olur.
-3️⃣ İzinsiz reklam yapmak kesinlikle yasaktır! Reklam için @ProyuncuTR adresine DM atınız.
+# --- YARDIMCI FONKSİYONLAR ---
+async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user_id = update.effective_user.id
+    cursor.execute("SELECT user_id FROM oturumlar WHERE user_id = ? AND datetime(son_giris, '+24 hours') > datetime('now')", (user_id,))
+    if cursor.fetchone():
+        return True
+    chat_member = await context.bot.get_chat_member(update.effective_chat.id, user_id)
+    return chat_member.status in ["administrator", "creator"]
 
-🇬🇧 English Rules:
-1️⃣ Profanity/slang is strictly prohibited. Accumulating 3 warnings results in a ban.
-2️⃣ Sending links will automatically disable your ability to send messages.
-3️⃣ Unauthorized advertising is strictly prohibited! Contact @ProyuncuTR via DM.
-
-2026© ProyuncuTR_hck Sohbet"""
-
-async def admin_mi(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    if not update.message or not update.effective_chat: return False
-    user_id = update.message.from_user.id
-    chat_id = update.effective_chat.id
-    if update.effective_chat.type == "private": return True
-    member = await context.bot.get_chat_member(chat_id, user_id)
-    return member.status in ["administrator", "creator"]
-
-async def start_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        mesaj = "Sadece adminler bu bölümü açabilir. Eğer bu botu kullanmak istiyorsanız grubunuzda satın almanız gerekmektedir."
-        await update.message.reply_text(mesaj)
-    else:
-        await update.message.reply_text("👋 Bot grupta aktif olarak çalışıyor!")
-
-async def reload_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await admin_mi(update, context):
-        await update.message.reply_text("🔄 Bot sistemi aktif ve pürüzsüz çalışıyor!")
-
-async def panel_goster(update: Update):
-    conn = sqlite3.connect("bot_data.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*), SUM(toplam) FROM kullanicilar")
-    kullanici_sayisi, toplam_mesaj = cursor.fetchone()
-    conn.close()
-
-    admin_panel_metni = (
-        f"✅ ADMIN PANELİ AKTİF ✅\n\n"
-        f"📊 Yönetim Paneli & İstatistikler:\n"
-        f"• Kayıtlı Kullanıcı: {kullanici_sayisi if kullanici_sayisi else 0}\n"
-        f"• Toplam Takip Edilen Mesaj: {toplam_mesaj if toplam_mesaj else 0}\n\n"
-        f"🔧 Yönetim Seçenekleri:\n"
-        f"└ /warn - Uyarı Ver\n"
-        f"└ /unwarn - Uyarı Sil\n"
-        f"└ /mute / /unmute - Sustur / Aç\n"
-        f"└ /ban / /unban - Banla / Kaldır"
-    )
-    await update.message.reply_text(admin_panel_metni)
-
-async def kod_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if not await admin_mi(update, context):
-        await update.message.reply_text("⛔ Bu komutu sadece grup yöneticileri kullanabilir!")
-        return
-
-    simdi = datetime.now()
-    if user_id in ADMIN_OTURUMLARI:
-        son_giris = ADMIN_OTURUMLARI[user_id]
-        if simdi - son_giris < timedelta(hours=24):
-            ADMIN_OTURUMLARI[user_id] = simdi
-            await panel_goster(update)
-            return
-
-    BEKLEYEN_ADMINLER.add(user_id)
-    await update.message.reply_text("🔐 Yönetici Doğrulaması:\nKod: ______")
-
-async def mesajlari_takip_et(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.from_user: return
+# --- HOŞ GELDİN VE HOŞÇA KAL SİSTEMİ ---
+async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    grup_adi = update.effective_chat.title or "Grubumuza"
+    chat_username = update.effective_chat.username
     
-    user = update.message.from_user
-    uid, name, chat_id = user.id, user.first_name, update.effective_chat.id
-    mesaj_metni = update.message.text.strip() if update.message.text else ""
+    uye_geldi = False
+    kullanici = None
+    
+    if update.message and update.message.new_chat_members:
+        for u in update.message.new_chat_members:
+            if not u.is_bot:
+                uye_geldi = True
+                kullanici = u
+                break
+    elif update.chat_member:
+        eski = update.chat_member.old_chat_member.status
+        yeni = update.chat_member.new_chat_member.status
+        if eski in ["left", "kicked"] and yeni in ["member", "administrator"]:
+            if not update.chat_member.new_chat_member.user.is_bot:
+                uye_geldi = True
+                kullanici = update.chat_member.new_chat_member.user
 
-    if uid in BEKLEYEN_ADMINLER:
-        BEKLEYEN_ADMINLER.remove(uid)
-        if mesaj_metni == ADMIN_KODU:
-            ADMIN_OTURUMLARI[uid] = datetime.now()
-            await panel_goster(update)
-            return
-        else:
-            await update.message.reply_text("❌ Hatalı kod girdiniz! Erişim reddedildi.")
-            return
-
-    if update.message.new_chat_members:
-        for yeni_uye in update.message.new_chat_members:
-            if yeni_uye.is_bot: continue
-            kullanici_adi = yeni_uye.first_name
-            su_an = datetime.now().strftime("%d.%m.%Y - %H:%M")
+    if uye_geldi and kullanici:
+        kullanici_adi = kullanici.mention_html()
+        mesaj = f"Merhaba {kullanici_adi}!\n\n**{grup_adi}** grubuna hoş geldin! 🎉"
+        
+        reply_markup = None
+        if chat_username and f"@{chat_username}" in BUTONLU_GRUPLAR:
+            keyboard = [[InlineKeyboardButton(BUTON_YAZISI, url=KANAL_LINKI)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
             
-            mesaj = (
-                f"Merhaba {kullanici_adi}, ProyuncuTR_hck Sohbet grubuna hoş geldin! Nasılsın? 🤗\n\n"
-                f"⏰ (Katılım Zamanı: {su_an})"
-            )
-            keyboard = [
-                [InlineKeyboardButton("📢 Telegram Kanalı", url="https://t.me/ProyuncuTR_hck")],
-                [InlineKeyboardButton("▶️ YouTube Kanalı", url="https://www.youtube.com/@ProyuncuTR_hck")]
-            ]
-            await update.message.reply_text(mesaj, reply_markup=InlineKeyboardMarkup(keyboard))
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=mesaj,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
         return
 
-    if user.is_bot: return
+    uye_gitti = False
+    ayrilan_kullanici = None
+    
+    if update.message and update.message.left_chat_member:
+        if not update.message.left_chat_member.is_bot:
+            uye_gitti = True
+            ayrilan_kullanici = update.message.left_chat_member
+    elif update.chat_member:
+        eski = update.chat_member.old_chat_member.status
+        yeni = update.chat_member.new_chat_member.status
+        if eski in ["member", "administrator"] and yeni in ["left", "kicked"]:
+            if not update.chat_member.new_chat_member.user.is_bot:
+                uye_gitti = True
+                ayrilan_kullanici = update.chat_member.new_chat_member.user
 
-    mention_name = f"@{user.username}" if user.username else f"@{user.first_name}"
-    is_admin = await admin_mi(update, context)
+    if uye_gitti and ayrilan_kullanici:
+        kullanici_adi = ayrilan_kullanici.mention_html()
+        gule_gule_mesaji = f"Güle güle {kullanici_adi}! 👋\n\n**{grup_adi}** grubundan ayrıldı."
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=gule_gule_mesaji,
+            parse_mode="HTML"
+        )
 
-    # LİNK ENGELLEME
-    link_regex = r"(https?://\S+|www\.\S+|\S+\.(com|net|org|io|tk|ml|ga|xyz|cf|gq))"
-    if re.search(link_regex, mesaj_metni.lower()) and not is_admin:
-        try:
-            await context.bot.restrict_chat_member(
-                chat_id=chat_id, 
-                user_id=uid, 
-                permissions=ChatPermissions(can_send_messages=False)
-            )
-            bildirim_mesaji = (
-                f"{mention_name} izin Verilmeyen bir link gönderdi :\n"
-                f"Eylem: Sesize Aldım"
-            )
-            await update.message.reply_text(bildirim_mesaji)
-            return
-        except Exception as e: 
-            print(f"Link işlem hatası: {e}")
-
-    # KÜFÜR ENGELLEME (3 UYARI)
-    conn = sqlite3.connect("bot_data.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT uyari FROM kullanicilar WHERE uid = ?", (uid,))
-    res = cursor.fetchone()
-    mevcut_uyari = (res[0] if res else 0)
-
-    if any(kufur in mesaj_metni.lower() for kufur in KUFUR_LISTESI) and not is_admin:
-        try:
-            await update.message.delete()
-            mevcut_uyari += 1
-            if mevcut_uyari >= 3:
-                await context.bot.ban_chat_member(chat_id=chat_id, user_id=uid)
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {name} 3/3 uyarıya ulaştı ve yasaklandı! 🚷")
-                cursor.execute("UPDATE kullanicilar SET uyari = 0 WHERE uid = ?", (uid,))
-            else:
-                cursor.execute("INSERT INTO kullanicilar (uid, name, uyari) VALUES (?, ?, ?) ON CONFLICT(uid) DO UPDATE SET uyari = ?", (uid, name, mevcut_uyari, mevcut_uyari))
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {name}, küfür yasaktır! Uyarı: {mevcut_uyari}/3")
-            conn.commit()
-            conn.close()
-            return
-        except Exception as e: print(f"Küfür hatası: {e}")
-
-    # SAYAÇ
+# --- MESAJ TAKİBİ ---
+async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_chat or not update.effective_user or update.effective_user.is_bot:
+        return
+        
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    username = update.effective_user.username or ""
+    full_name = update.effective_user.full_name or "Kullanıcı"
+    
     cursor.execute("""
-        INSERT INTO kullanicilar (uid, name, username, gunluk, haftalik, aylik, toplam) VALUES (?, ?, ?, 1, 1, 1, 1)
-        ON CONFLICT(uid) DO UPDATE SET name=excluded.name, username=excluded.username, gunluk=gunluk+1, haftalik=haftalik+1, aylik=aylik+1, toplam=toplam+1
-    """, (uid, name, user.username))
+    INSERT INTO mesajlar (chat_id, user_id, username, full_name, mesaj_sayisi)
+    VALUES (?, ?, ?, ?, 1)
+    ON CONFLICT(chat_id, user_id) DO UPDATE SET
+        mesaj_sayisi = mesaj_sayisi + 1,
+        username = excluded.username,
+        full_name = excluded.full_name
+    """, (chat_id, user_id, username, full_name))
     conn.commit()
-    conn.close()
 
-async def siralama_olustur_yazili(update: Update, kategori: str, baslik: str):
-    conn = sqlite3.connect("bot_data.db")
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT uid, name, {kategori} FROM kullanicilar WHERE {kategori} > 0 ORDER BY {kategori} DESC LIMIT 5")
-    top_liste = cursor.fetchall()
-
-    if not top_liste:
-        await update.message.reply_text(f"ℹ️ Henüz {baslik} alanında mesaj verisi yok!")
-        conn.close()
-        return
-
-    metin = f"📊 PROYUNCUTR_HCK SOHBET {baslik.upper()} SIRALAMASI 📊\n\n"
-    for i, d in enumerate(top_liste, 1):
-        metin += f"{i}. {d[1]} - {d[2]} mesaj\n"
-
-    user = update.message.from_user
-    cursor.execute(f"SELECT uid, name, {kategori} FROM kullanicilar WHERE {kategori} > 0 ORDER BY {kategori} DESC")
-    tum_liste = cursor.fetchall()
-    
-    kendi_sira = None
-    kendi_mesaj = 0
-    for idx, row in enumerate(tum_liste, 1):
-        if row[0] == user.id:
-            kendi_sira = idx
-            kendi_mesaj = row[2]
-            break
-
-    metin += "\n───────────────\n"
-    if kendi_sira:
-        metin += f"👤 Senin Durumun: {kendi_sira}. sıradasın ({kendi_mesaj} mesaj)"
+# --- KOMUTLAR ---
+async def cmd_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if len(context.args) > 0 and context.args[0] == ADMIN_KODU:
+        cursor.execute("INSERT OR REPLACE INTO oturumlar (user_id) VALUES (?)", (user_id,))
+        conn.commit()
+        await update.message.reply_text("✅ Yönetici doğrulaması başarılı! 24 saatlik oturum açıldı.")
     else:
-        metin += f"👤 Senin Durumun: {user.first_name}, bu kategoride mesajın yok!"
+        await update.message.reply_text("🔐 Yönetici Doğrulaması: Lütfen doğru kodu yazın. Örnek: `/kod 890678`", parse_mode="Markdown")
 
-    conn.close()
-    await update.message.reply_text(metin)
+async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔄 Bot sistemi aktif ve pürüzsüz çalışıyor!")
 
-async def siralama_olustur_grafik(update: Update, kategori: str, baslik: str):
-    conn = sqlite3.connect("bot_data.db")
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT name, {kategori} FROM kullanicilar WHERE {kategori} > 0 ORDER BY {kategori} DESC LIMIT 5")
-    top_liste = cursor.fetchall()
-    conn.close()
+async def cmd_kurallar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("📜 **Grup Kuralları:**\n1. Küfür ve hakaret yasaktır.\n2. Reklam ve link paylaşımı yasaktır.\n3. Saygılı olun.")
 
-    if not top_liste:
-        await update.message.reply_text(f"ℹ️ Henüz {baslik} alanında grafik verisi yok!")
+async def cmd_hakkinda(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(HAKKINDA_METNI, parse_mode="Markdown")
+
+async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
         return
-
-    isimler = [row[0] for row in reversed(top_liste)]
-    mesajlar = [row[1] for row in reversed(top_liste)]
-
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    bars = ax.barh(isimler, mesajlar, color='#10B981')
-    ax.set_xlabel('Mesaj Sayısı', fontsize=12, fontweight='bold', color='#1F2937')
-    ax.set_title(f'ProyuncuTR_hck Sohbet - {baslik} Aktiflik Grafiği', fontsize=14, fontweight='bold', color='#111827')
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Lütfen uyarmak istediğiniz kullanıcının mesajını yanıtlayın.")
+        return
     
-    for bar in bars:
-        width = bar.get_width()
-        ax.text(width + 0.3, bar.get_y() + bar.get_height()/2, f'{int(width)}', ha='left', va='center', fontweight='bold')
-
-    plt.tight_layout()
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150)
-    buf.seek(0)
-    plt.close(fig)
-
-    await update.message.reply_photo(photo=buf, caption=f"📊 ProyuncuTR_hck Sohbet {baslik} Grafik Sıralaması")
-
-async def gunluk_yazili(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_olustur_yazili(update, "gunluk", "Günlük")
-async def haftalik_yazili(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_olustur_yazili(update, "haftalik", "Haftalık")
-async def aylik_yazili(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_olustur_yazili(update, "aylik", "Aylık")
-async def tum_yazili(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_olustur_yazili(update, "toplam", "Tüm Zamanlar")
-
-async def gunluk_grafikli(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_olustur_grafik(update, "gunluk", "Günlük")
-async def haftalik_grafikli(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_olustur_grafik(update, "haftalik", "Haftalık")
-async def aylik_grafikli(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_olustur_grafik(update, "aylik", "Aylık")
-async def tum_grafikli(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_olustur_grafik(update, "toplam", "Tüm Zamanlar")
-
-async def ban_at(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_mi(update, context) or not update.message.reply_to_message: return
-    hedef = update.message.reply_to_message.from_user
-    await context.bot.ban_chat_member(chat_id=update.effective_chat.id, user_id=hedef.id)
-    await update.message.reply_text(f"🚫 {hedef.first_name} yasaklandı!")
-
-async def unban_at(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_mi(update, context) or not update.message.reply_to_message: return
-    hedef = update.message.reply_to_message.from_user
-    await context.bot.unban_chat_member(chat_id=update.effective_chat.id, user_id=hedef.id)
-    await update.message.reply_text(f"✅ {hedef.first_name} yasağı kaldırıldı!")
-
-async def mute_at(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_mi(update, context) or not update.message.reply_to_message: return
-    hedef = update.message.reply_to_message.from_user
-    await context.bot.restrict_chat_member(chat_id=update.effective_chat.id, user_id=hedef.id, permissions=ChatPermissions(can_send_messages=False))
-    await update.message.reply_text(f"🔇 {hedef.first_name} susturuldu!")
-
-async def unmute_at(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_mi(update, context) or not update.message.reply_to_message: return
-    hedef = update.message.reply_to_message.from_user
-    await context.bot.restrict_chat_member(chat_id=update.effective_chat.id, user_id=hedef.id, permissions=ChatPermissions(can_send_messages=True, can_send_media_messages=True, can_send_other_messages=True, can_add_web_page_previews=True))
-    await update.message.reply_text(f"🔊 {hedef.first_name} susturulması kaldırıldı!")
-
-async def kurallari_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(KURALLAR_METNI)
-
-async def uyari_ver(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_mi(update, context) or not update.message.reply_to_message: return
-    hedef = update.message.reply_to_message.from_user
-    uid, chat_id = hedef.id, update.effective_chat.id
-
-    conn = sqlite3.connect("bot_data.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT uyari FROM kullanicilar WHERE uid = ?", (uid,))
-    res = cursor.fetchone()
-    mevcut = (res[0] if res else 0) + 1
-
-    if mevcut >= 3:
-        await context.bot.ban_chat_member(chat_id=chat_id, user_id=uid)
-        cursor.execute("UPDATE kullanicilar SET uyari = 0 WHERE uid = ?", (uid,))
-        await update.message.reply_text(f"⚠️ {hedef.first_name} 3/3 uyarıya ulaştı ve banlandı!")
+    target_user = update.message.reply_to_message.from_user
+    chat_id = update.effective_chat.id
+    
+    cursor.execute("""
+    INSERT INTO uyarilar (chat_id, user_id, uyari_sayisi)
+    VALUES (?, ?, 1)
+    ON CONFLICT(chat_id, user_id) DO UPDATE SET uyari_sayisi = uyari_sayisi + 1
+    """, (chat_id, target_user.id))
+    conn.commit()
+    
+    cursor.execute("SELECT uyari_sayisi FROM uyarilar WHERE chat_id = ? AND user_id = ?", (chat_id, target_user.id))
+    sayi = cursor.fetchone()[0]
+    
+    if sayi >= 3:
+        await context.bot.ban_chat_member(chat_id, target_user.id)
+        await update.message.reply_text(f"🚫 {target_user.mention_html()} 3 uyarı aldığı için gruptan yasaklandı!", parse_mode="HTML")
     else:
-        cursor.execute("INSERT INTO kullanicilar (uid, name, uyari) VALUES (?, ?, ?) ON CONFLICT(uid) DO UPDATE SET uyari = ?", (uid, hedef.first_name, mevcut, mevcut))
-        await update.message.reply_text(f"⚠️ {hedef.first_name} uyarıldı! Uyarı: {mevcut}/3")
+        await update.message.reply_text(f"⚠️ {target_user.mention_html()} uyarıldı! (Toplam: {sayi}/3)", parse_mode="HTML")
 
+async def cmd_unwarn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+    if not update.message.reply_to_message:
+        return
+    target_user = update.message.reply_to_message.from_user
+    cursor.execute("UPDATE uyarilar SET uyari_sayisi = 0 WHERE chat_id = ? AND user_id = ?", (update.effective_chat.id, target_user.id))
     conn.commit()
-    conn.close()
+    await update.message.reply_text(f"✅ {target_user.mention_html()} uyarısı sıfırlandı.", parse_mode="HTML")
 
-async def uyari_sil(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_mi(update, context) or not update.message.reply_to_message: return
-    hedef = update.message.reply_to_message.from_user
-    conn = sqlite3.connect("bot_data.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT uyari FROM kullanicilar WHERE uid = ?", (hedef.id,))
-    res = cursor.fetchone()
-    mevcut = res[0] if res else 0
-    if mevcut > 0:
-        mevcut -= 1
-        cursor.execute("UPDATE kullanicilar SET uyari = ? WHERE uid = ?", (mevcut, hedef.id))
-        await update.message.reply_text(f"✅ {hedef.first_name} uyarısı silindi. Kalan: {mevcut}/3")
-    conn.commit()
-    conn.close()
+async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+    if update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+        from telegram import ChatPermissions
+        await context.bot.restrict_chat_member(update.effective_chat.id, target_user.id, permissions=ChatPermissions(can_send_messages=False))
+        await update.message.reply_text(f"🤐 {target_user.mention_html()} susturuldu.", parse_mode="HTML")
+
+async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+    if update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+        from telegram import ChatPermissions
+        await context.bot.restrict_chat_member(update.effective_chat.id, target_user.id, permissions=ChatPermissions(can_send_messages=True))
+        await update.message.reply_text(f"🔊 {target_user.mention_html()} susturması kaldırıldı.", parse_mode="HTML")
+
+async def cmd_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+    if update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+        await context.bot.ban_chat_member(update.effective_chat.id, target_user.id)
+        await update.message.reply_text(f"🚫 {target_user.mention_html()} gruptan yasaklandı.", parse_mode="HTML")
+
+async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        return
+    if update.message.reply_to_message:
+        target_user = update.message.reply_to_message.from_user
+        await context.bot.unban_chat_member(update.effective_chat.id, target_user.id)
+        await update.message.reply_text(f"✅ {target_user.mention_html()} yasağı kaldırıldı.", parse_mode="HTML")
+
+async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    cursor.execute("SELECT full_name, mesaj_sayisi FROM mesajlar WHERE chat_id = ? ORDER BY mesaj_sayisi DESC LIMIT 10", (chat_id,))
+    rows = cursor.fetchall()
+    
+    if not rows:
+        await update.message.reply_text("Henüz mesaj kaydı bulunmuyor.")
+        return
+        
+    metin = "🏆 **En Çok Mesaj Atanlar Sıralaması:**\n\n"
+    for idx, (name, count) in enumerate(rows, start=1):
+        metin += f"{idx}. {name} - {count} mesaj\n"
+        
+    await update.message.reply_text(metin, parse_mode="Markdown")
+
+# --- MAIN ---
+def main():
+    TOKEN = os.getenv("BOT_TOKEN")
+    if not TOKEN:
+        TOKEN = "YOUR_BOT_TOKEN_HERE"
+        
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(ChatMemberHandler(uye_durum_takibi, ChatMemberHandler.CHAT_MEMBER))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, uye_durum_takibi))
+    app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, uye_durum_takibi))
+
+    app.add_handler(CommandHandler("kod", cmd_kod))
+    app.add_handler(CommandHandler("reload", cmd_reload))
+    app.add_handler(CommandHandler("kurallar", cmd_kurallar))
+    app.add_handler(CommandHandler("hakkinda", cmd_hakkinda))
+    app.add_handler(CommandHandler("warn", cmd_warn))
+    app.add_handler(CommandHandler("unwarn", cmd_unwarn))
+    app.add_handler(CommandHandler("mute", cmd_mute))
+    app.add_handler(CommandHandler("unmute", cmd_unmute))
+    app.add_handler(CommandHandler("ban", cmd_ban))
+    app.add_handler(CommandHandler("unban", cmd_unban))
+    app.add_handler(CommandHandler(["tum", "siralama", "gunluk", "haftalik", "aylik"], cmd_siralama))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mesaj_takip))
+
+    print("Bulut Sunucu Botu Başarıyla Çalışıyor!")
+    app.run_polling(allowed_updates=["chat_member", "message"])
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    
-    app.add_handler(CommandHandler("start", start_komutu))
-    app.add_handler(CommandHandler("kod", kod_komutu))
-    app.add_handler(CommandHandler("reload", reload_komutu))
-    app.add_handler(CommandHandler("kurallar", kurallari_goster))
-    
-    app.add_handler(CommandHandler("gunluk", gunluk_yazili))
-    app.add_handler(CommandHandler("haftalik", haftalik_yazili))
-    app.add_handler(CommandHandler("aylik", aylik_yazili))
-    app.add_handler(CommandHandler("tum", tum_yazili))
-    app.add_handler(CommandHandler("siralama", tum_yazili))
-
-    app.add_handler(CommandHandler("grafikgunluk", gunluk_grafikli))
-    app.add_handler(CommandHandler("grafikhaftalik", haftalik_grafikli))
-    app.add_handler(CommandHandler("grafikaylik", aylik_grafikli))
-    app.add_handler(CommandHandler("grafiktum", tum_grafikli))
-
-    app.add_handler(CommandHandler("warn", uyari_ver))
-    app.add_handler(CommandHandler("unwarn", uyari_sil))
-    app.add_handler(CommandHandler("ban", ban_at))
-    app.add_handler(CommandHandler("unban", unban_at))
-    app.add_handler(CommandHandler("mute", mute_at))
-    app.add_handler(CommandHandler("unmute", unmute_at))
-
-    app.add_handler(MessageHandler(filters.ALL, mesajlari_takip_et))
-
-    print("Bulut Sunucu Botu Çalışıyor!")
-    app.run_polling(allowed_updates=["chat_member", "message"])
+    main()
