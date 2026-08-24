@@ -264,7 +264,7 @@ async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     TOKEN = os.getenv("BOT_TOKEN")
     if not TOKEN:
-        TOKEN = "YOUR_BOT_TOKEN_HERE"
+        TOKEN = "8823945672:AAHnfiT2s2PR3Vt4o_8xD6ro3tgrs5T1RMk"
         
     app = ApplicationBuilder().token(TOKEN).build()
 
