@@ -98,8 +98,16 @@ def get_grup_ayar(chat_id: int):
     return row
 
 def kaydet_grup(chat_id: int, title: str):
+    if not title:
+        title = f"Grup ({chat_id})"
     cursor.execute("INSERT INTO gruplar (chat_id, title) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title", (chat_id, title))
     conn.commit()
+
+async def bot_grup_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.my_chat_member and update.my_chat_member.chat:
+        chat = update.my_chat_member.chat
+        if chat.type in ["group", "supergroup"]:
+            kaydet_grup(chat.id, chat.title)
 
 async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -249,7 +257,7 @@ async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE)
     rows = cursor.fetchall()
     
     if not rows:
-        await context.bot.send_message(chat_id=user_id, text="⚠️ Bot henüz bir gruba eklenmemiş veya kayıtlı grup bulunamadı.")
+        await context.bot.send_message(chat_id=user_id, text="⚠️ Bot henüz kayıtlı bir grup bulamadı. Lütfen grubun içinde herhangi bir mesaj (örneğin `/reload`) atın.")
         return
 
     keyboard = []
@@ -455,6 +463,7 @@ def main():
         
     app = ApplicationBuilder().token(TOKEN).build()
 
+    app.add_handler(ChatMemberHandler(bot_grup_durum_takibi, ChatMemberHandler.MY_CHAT_MEMBER))
     app.add_handler(ChatMemberHandler(uye_durum_takibi, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, uye_durum_takibi))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, uye_durum_takibi))
@@ -476,7 +485,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mesaj_takip))
 
     print("Bulut Sunucu Botu Başarıyla Çalışıyor!")
-    app.run_polling(allowed_updates=["chat_member", "message", "callback_query"])
+    app.run_polling(allowed_updates=["chat_member", "my_chat_member", "message", "callback_query"])
 
 if __name__ == "__main__":
     main()
