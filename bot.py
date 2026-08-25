@@ -3,16 +3,18 @@ import sqlite3
 import threading
 import http.server
 import socketserver
+import time
+from datetime import datetime
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import numpy as np
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, 
     ChatMemberHandler, CallbackQueryHandler, filters, ContextTypes
 )
 
-# Render'ın port isteğini karşılamak için arka planda dummy HTTP sunucusu
 PORT = int(os.environ.get("PORT", 8080))
 
 class DummyHandler(http.server.SimpleHTTPRequestHandler):
@@ -20,26 +22,27 @@ class DummyHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(b"Group Assistant Bot is running smoothly!")
+        self.wfile.write(b"Group Assistant Bot v18.0 is running smoothly!")
 
 def run_dummy_server():
     try:
         with socketserver.TCPServer(("0.0.0.0", PORT), DummyHandler) as httpd:
-            print(f"Dummy HTTP server running on port {PORT}")
             httpd.serve_forever()
-    except Exception as e:
-        print(f"Dummy server error: {e}")
+    except Exception:
+        pass
 
-# Token parçalanarak boşluk riski sıfırlandı
 p1 = "8698823300"
 p2 = "AAEfWHhhajLB4mBkS7_GjaGVkOywBc9dagY"
 TOKEN = f"{p1}:{p2}"
 
-ADMIN_KODU = "892000"
+GIZLI_ADMIN_SIFRE = "ProyuncuTR_Mega_Admin_2026_Hck!"
 BOT_USERNAME = "@Group_Assistant_offical_bot"
-HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nAdvanced Group Management & Security Bot\nVersion v11.1 (Polling + Port Fix)"
+HAKKINDA_METNI = f"🤖 **Group Assistant**\nOfficial Bot: {BOT_USERNAME}\nVersion v18.0"
 
+MUAF_KULLANICILAR = ["proyunctr", "hck_cpm"]
+admin_last_midnight_greet = {}
 user_last_message_time = {}
+son_moderasyon_islemleri = {}
 
 conn = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = conn.cursor()
@@ -52,9 +55,16 @@ CREATE TABLE IF NOT EXISTS mesajlar (
     username TEXT,
     full_name TEXT,
     mesaj_sayisi INTEGER DEFAULT 0,
+    tarih TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (chat_id, user_id)
 )
 """)
+
+try:
+    cursor.execute("ALTER TABLE mesajlar ADD COLUMN tarih TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+    conn.commit()
+except Exception:
+    pass
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS uyarilar (
@@ -90,6 +100,15 @@ CREATE TABLE IF NOT EXISTS grup_notlari (
 """)
 
 cursor.execute("""
+CREATE TABLE IF NOT EXISTS oto_cevaplar (
+    chat_id INTEGER,
+    tetikleyici TEXT,
+    yanit TEXT,
+    PRIMARY KEY (chat_id, tetikleyici)
+)
+""")
+
+cursor.execute("""
 CREATE TABLE IF NOT EXISTS grup_ayarlari (
     chat_id INTEGER PRIMARY KEY,
     hosgeldin_mesaj TEXT DEFAULT 'Merhaba {kullanici}!\n\n**{grup}** grubuna hoş geldin! 🎉',
@@ -109,14 +128,29 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS beklemedeki_islemler (
     user_id INTEGER PRIMARY KEY,
     chat_id INTEGER,
-    islem TEXT
+    islem TEXT,
+    ek_veri TEXT
 )
 """)
 conn.commit()
 
-async def is_admin(user_id: int) -> bool:
-    cursor.execute("SELECT user_id FROM oturumlar WHERE user_id = ? AND datetime(son_giris, '+24 hours') > datetime('now')", (user_id,))
-    return cursor.fetchone() is not None
+async def is_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user = update.effective_user
+    if not user:
+        return False
+    if user.username and user.username.lower() in MUAF_KULLANICILAR:
+        return True
+    cursor.execute("SELECT user_id FROM oturumlar WHERE user_id = ? AND datetime(son_giris, '+24 hours') > datetime('now')", (user.id,))
+    if cursor.fetchone() is not None:
+        return True
+    if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
+        try:
+            member = await context.bot.get_chat_member(update.effective_chat.id, user.id)
+            if member.status in ["administrator", "creator"]:
+                return True
+        except Exception:
+            pass
+    return False
 
 def get_grup_ayar(chat_id: int):
     chat_id = int(chat_id)
@@ -144,12 +178,10 @@ async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     grup_adi = update.effective_chat.title or "Grubumuza"
     kaydet_grup(chat_id, grup_adi)
-    
     hosgeldin_fmt, hoscakal_fmt, buton_aktif, b_yazisi, b_linki, _, _, _, _, _ = get_grup_ayar(chat_id)
     
     uye_geldi = False
     kullanici = None
-    
     if update.message and update.message.new_chat_members:
         for u in update.message.new_chat_members:
             if not u.is_bot:
@@ -167,18 +199,12 @@ async def uye_durum_takibi(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uye_geldi and kullanici:
         kullanici_adi = kullanici.mention_html()
         mesaj = hosgeldin_fmt.replace("{kullanici}", kullanici_adi).replace("{grup}", grup_adi)
-        
-        reply_markup = None
-        if buton_aktif == 1:
-            keyboard = [[InlineKeyboardButton(b_yazisi, url=b_linki)]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(b_yazisi, url=b_linki)]]) if buton_aktif == 1 else None
         await context.bot.send_message(chat_id=chat_id, text=mesaj, parse_mode="HTML", reply_markup=reply_markup)
         return
 
     uye_gitti = False
     ayrilan_kullanici = None
-    
     if update.message and update.message.left_chat_member:
         if not update.message.left_chat_member.is_bot:
             uye_gitti = True
@@ -208,20 +234,40 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if update.effective_chat.type in ["group", "supergroup"]:
         kaydet_grup(chat_id, update.effective_chat.title)
-        
         _, _, _, _, _, antispam_aktif, kufur_aktif, lock_links, lock_media, lock_stickers = get_grup_ayar(chat_id)
         
+        # Gece yarısı yönetici & sahip karşılama döngüsü
+        simdi = datetime.now()
+        if simdi.hour == 0:
+            try:
+                member = await context.bot.get_chat_member(chat_id, user_id)
+                if member.status in ["administrator", "creator"]:
+                    key = (chat_id, user_id)
+                    son_zaman = admin_last_midnight_greet.get(key, 0)
+                    if time.time() - son_zaman > 3600:
+                        admin_last_midnight_greet[key] = time.time()
+                        if member.status == "creator":
+                            await update.message.reply_text(
+                                f"👑 Efendim, saygıdeğer grup sahibimiz {user.mention_html()}, gecenin bu saatinde teşrif ettiniz. Hoş geldiniz! 🌙",
+                                parse_mode="HTML"
+                            )
+                        else:
+                            await update.message.reply_text(
+                                f"🛡️ Hoş geldiniz sayın yöneticimiz {user.mention_html()}! Gece mesainizde başarılar dilerim.",
+                                parse_mode="HTML"
+                            )
+            except Exception:
+                pass
+
         if antispam_aktif == 1:
-            import time
             current_time = time.time()
             key = (chat_id, user_id)
-            if key in user_last_message_time:
-                if current_time - user_last_message_time[key] < 1.0:
-                    try:
-                        await update.message.delete()
-                        return
-                    except Exception:
-                        pass
+            if key in user_last_message_time and current_time - user_last_message_time[key] < 1.0:
+                try:
+                    await update.message.delete()
+                    return
+                except Exception:
+                    pass
             user_last_message_time[key] = current_time
 
         if lock_media == 1 and (update.message.photo or update.message.video or update.message.document):
@@ -250,76 +296,220 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-        yasakli_kelimeler = ["amk", "aq", "orospu", "sik", "anan", "piç"]
+        yasakli_kelimeler = [
+            "amk", "aq", "orospu", "o.ç.", "oc", "sik", "anan", "piç", "amina", 
+            "göt", "yarrak", "amcık", "orospi", "sikik", "sikerim", "kahpe", "pezevenk", 
+            "gvat", "gavat", "ibne", "orospucocugu", "amq", "ananı", "siktimin"
+        ]
         if kufur_aktif == 1 and any(k in metin for k in yasakli_kelimeler):
             try:
                 await update.message.delete()
-                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {user.mention_html()}, küfür etmek yasaktır!", parse_mode="HTML")
+                await context.bot.send_message(chat_id=chat_id, text=f"⚠️ {user.mention_html()}, bu grupta küfür ve argo kullanımı yasaktır!", parse_mode="HTML")
                 return
             except Exception:
                 pass
 
+        # Oto-Cevap Kontrolü
+        cursor.execute("SELECT yanit FROM oto_cevaplar WHERE chat_id = ? AND tetikleyici = ?", (chat_id, metin))
+        oto_row = cursor.fetchone()
+        if oto_row:
+            await update.message.reply_text(oto_row[0], parse_mode="Markdown")
+            return
     else:
         metin_raw = update.message.text or ""
         metin = metin_raw.lower().strip()
 
-    if metin == "grup ayarları":
-        try:
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="🔐 **Group Assistant Yönetici Doğrulaması:**\n\nÖrnek: `/kod 892000`",
-                parse_mode="Markdown"
-            )
-            if update.effective_chat.type != "private":
-                await update.message.reply_text("📩 DM mesajlarına bak! Ayar paneli özel mesaj üzerinden gönderildi.")
-        except Exception:
-            await update.message.reply_text("⚠️ Lütfen önce bota özelden (DM) `/start` yazarak başlatın.")
-        return
-
-    if update.effective_chat.type == "private" and await is_admin(user_id):
+    # DM üzerinden Bekleyen İşlemler
+    if update.effective_chat.type == "private" and await is_admin(update, context):
         cursor.execute("SELECT chat_id, islem FROM beklemedeki_islemler WHERE user_id = ?", (user_id,))
         bekleyen = cursor.fetchone()
         if bekleyen:
             target_chat_id, islem = bekleyen
+            cursor.execute("DELETE FROM beklemedeki_islemler WHERE user_id = ?", (user_id,))
+            conn.commit()
             if islem == "set_hg":
                 cursor.execute("UPDATE grup_ayarlari SET hosgeldin_mesaj = ? WHERE chat_id = ?", (metin_raw, target_chat_id))
-                conn.commit()
-                cursor.execute("DELETE FROM beklemedeki_islemler WHERE user_id = ?", (user_id,))
                 conn.commit()
                 await update.message.reply_text("✅ Hoş Geldin mesajı güncellendi!")
                 return
             elif islem == "set_hk":
                 cursor.execute("UPDATE grup_ayarlari SET hoscakal_mesaj = ? WHERE chat_id = ?", (metin_raw, target_chat_id))
                 conn.commit()
-                cursor.execute("DELETE FROM beklemedeki_islemler WHERE user_id = ?", (user_id,))
-                conn.commit()
                 await update.message.reply_text("✅ Hoşça Kal mesajı güncellendi!")
                 return
-            elif islem == "set_byazisi":
-                cursor.execute("UPDATE grup_ayarlari SET buton_yazisi = ? WHERE chat_id = ?", (metin_raw, target_chat_id))
-                conn.commit()
-                cursor.execute("DELETE FROM beklemedeki_islemler WHERE user_id = ?", (user_id,))
-                conn.commit()
-                await update.message.reply_text("✅ Buton yazısı güncellendi!")
-                return
-            elif islem == "set_blink":
-                cursor.execute("UPDATE grup_ayarlari SET buton_linki = ? WHERE chat_id = ?", (metin_raw, target_chat_id))
-                conn.commit()
-                cursor.execute("DELETE FROM beklemedeki_islemler WHERE user_id = ?", (user_id,))
-                conn.commit()
-                await update.message.reply_text("✅ Buton linki güncellendi!")
+            elif islem == "arama_yapiliyor":
+                await arama_sonuclarini_goster(user_id, metin_raw, context)
                 return
 
     if update.effective_chat.type in ["group", "supergroup"]:
         cursor.execute("""
-        INSERT INTO mesajlar (chat_id, user_id, username, full_name, mesaj_sayisi)
-        VALUES (?, ?, ?, ?, 1)
+        INSERT INTO mesajlar (chat_id, user_id, username, full_name, mesaj_sayisi, tarih)
+        VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
         ON CONFLICT(chat_id, user_id) DO UPDATE SET
             mesaj_sayisi = mesaj_sayisi + 1,
             username = excluded.username,
-            full_name = excluded.full_name
+            full_name = excluded.full_name,
+            tarih = CURRENT_TIMESTAMP
         """, (chat_id, user_id, username, full_name))
         conn.commit()
+
+# --- GRUP İÇİNDEN AYAR MENÜSÜ KOMUTU (/ayar) ---
+async def cmd_ayar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    chat_id = update.effective_chat.id
+    title = update.effective_chat.title or "Bu Grup"
+    _, _, b_aktif, b_yazisi, b_linki, _, kufur_aktif, link_aktif, medya_aktif, sticker_aktif = get_grup_ayar(chat_id)
+    
+    keyboard = [
+        [InlineKeyboardButton(f"🔘 Hoş Geldin Butonu: {'AÇIK 🟢' if b_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tb_{chat_id}")],
+        [InlineKeyboardButton(f"🛡️ Küfür Filtresi: {'AÇIK 🟢' if kufur_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tkufur_{chat_id}")],
+        [InlineKeyboardButton(f"🔗 Link Engeli: {'AÇIK 🟢' if link_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tlink_{chat_id}")],
+        [InlineKeyboardButton(f"🖼️ Medya Engeli: {'AÇIK 🟢' if medya_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tmedia_{chat_id}")],
+        [InlineKeyboardButton(f"🎭 Sticker Engeli: {'AÇIK 🟢' if sticker_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tsticker_{chat_id}")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(f"⚙️ **{title}** - Grup Yönetim Paneli:\nAşağıdaki düğmelerden anında ayar yapabilirsiniz:", reply_markup=reply_markup, parse_mode="Markdown")
+
+async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ Kullanım: `/broadcast <duyuru_metni>`")
+        return
+    duyuru_metni = " ".join(args)
+    cursor.execute("SELECT chat_id FROM gruplar")
+    grup_listesi = cursor.fetchall()
+    
+    basarili = 0
+    for grup in grup_listesi:
+        try:
+            await context.bot.send_message(chat_id=grup[0], text=f"📢 **Yönetici Duyurusu:**\n\n{duyuru_metni}", parse_mode="Markdown")
+            basarili += 1
+        except Exception:
+            pass
+    await update.message.reply_text(f"✅ Duyuru başarıyla **{basarili}** gruba gönderildi!")
+
+async def cmd_otokelime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("⚠️ Kullanım: `/otokelime <tetikleyici> <verilecek_yanit>`")
+        return
+    tetik = args[0].lower()
+    yanit = " ".join(args[1:])
+    chat_id = update.effective_chat.id
+    
+    cursor.execute("INSERT INTO oto_cevaplar (chat_id, tetikleyici, yanit) VALUES (?, ?, ?) ON CONFLICT(chat_id, tetikleyici) DO UPDATE SET yanit = excluded.yanit", (chat_id, tetik, yanit))
+    conn.commit()
+    await update.message.reply_text(f"✅ `{tetik}` kelimesi için oto-cevap eklendi!")
+
+async def cmd_silkelime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ Kullanım: `/silkelime <tetikleyici>`")
+        return
+    tetik = args[0].lower()
+    chat_id = update.effective_chat.id
+    cursor.execute("DELETE FROM oto_cevaplar WHERE chat_id = ? AND tetikleyici = ?", (chat_id, tetik))
+    conn.commit()
+    await update.message.reply_text(f"🗑️ `{tetik}` oto-cevabı kaldırıldı.")
+
+async def cmd_temizle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    chat_id = update.effective_chat.id
+    silinen_sayisi = 0
+    try:
+        if update.message.reply_to_message:
+            msg_id = update.message.reply_to_message.message_id
+            for i in range(5):
+                try:
+                    await context.bot.delete_message(chat_id, msg_id + i)
+                    silinen_sayisi += 1
+                except Exception:
+                    pass
+            await update.message.delete()
+            not_msg = await context.bot.send_message(chat_id, f"🧹 Toplu temizlik yapıldı ({silinen_sayisi} mesaj silindi).")
+            time.sleep(3)
+            await not_msg.delete()
+    except Exception:
+        pass
+
+async def cmd_undo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    chat_id = update.effective_chat.id
+    son_islem = son_moderasyon_islemleri.get(chat_id)
+    if not son_islem:
+        await update.message.reply_text("ℹ️ Geri alınabilecek son moderasyon hareketi yok.")
+        return
+    islem_tipi, hedef_id = son_islem
+    try:
+        if islem_tipi == "mute":
+            await context.bot.restrict_chat_member(chat_id, hedef_id, permissions=ChatPermissions(can_send_messages=True))
+            await update.message.reply_text("↩️ Son susturma işlemi geri alındı (Ses açıldı).")
+        elif islem_tipi == "warn":
+            cursor.execute("UPDATE uyarilar SET uyari_sayisi = MAX(0, uyari_sayisi - 1) WHERE chat_id = ? AND user_id = ?", (chat_id, hedef_id))
+            conn.commit()
+            await update.message.reply_text("↩️ Son uyarı geri alındı.")
+        del son_moderasyon_islemleri[chat_id]
+    except Exception:
+        pass
+
+async def cmd_whois(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ Bilgisine bakmak istediğiniz kişinin mesajını yanıtlayın.")
+        return
+    target = update.message.reply_to_message.from_user
+    chat_id = update.effective_chat.id
+    cursor.execute("SELECT mesaj_sayisi FROM mesajlar WHERE chat_id = ? AND user_id = ?", (chat_id, target.id))
+    msj_row = cursor.fetchone()
+    msj_sayisi = msj_row[0] if msj_row else 0
+    cursor.execute("SELECT uyari_sayisi FROM uyarilar WHERE chat_id = ? AND user_id = ?", (chat_id, target.id))
+    uyari_row = cursor.fetchone()
+    uyari_sayisi = uyari_row[0] if uyari_row else 0
+    
+    await update.message.reply_text(
+        f"👤 **Kullanıcı Bilgi Kartı**\n\n"
+        f"• Adı: `{target.full_name}`\n"
+        f"• Kullanıcı Adı: `@{target.username}` (ID: `{target.id}`)\n"
+        f"• Mesajı: `{msj_sayisi}`\n"
+        f"• Uyarı: `{uyari_sayisi}/3`",
+        parse_mode="Markdown"
+    )
+
+async def cmd_admin_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    args = context.args
+    if not args:
+        await update.message.reply_text("🔐 **Admin Modu**\nKullanım: `/adminsator_admin_mode GİZLİ_ŞİFRE`", parse_mode="Markdown")
+        return
+    if " ".join(args) == GIZLI_ADMIN_SIFRE:
+        cursor.execute("INSERT INTO oturumlar (user_id, son_giris) VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET son_giris = CURRENT_TIMESTAMP", (user_id,))
+        conn.commit()
+        await update.message.reply_text("🔓 **Admin Modu Açıldı!** Panele yönlendiriliyorsunuz...")
+        await send_grup_secim_menu(user_id, context)
+    else:
+        await update.message.reply_text("❌ **Hatalı Şifre!**")
+
+async def cmd_grup_arama(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context): return
+    args = context.args
+    user_id = update.effective_user.id
+    if not args:
+        cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, 0, 'arama_yapiliyor') ON CONFLICT(user_id) DO UPDATE SET islem = 'arama_yapiliyor'", (user_id,))
+        conn.commit()
+        await update.message.reply_text("🔍 **Grup Arama:** Aramak istediğiniz grup adını yazın:")
+        return
+    await arama_sonuclarini_goster(user_id, " ".join(args), context)
+
+async def arama_sonuclarini_goster(user_id: int, kelime: str, context: ContextTypes.DEFAULT_TYPE):
+    cursor.execute("SELECT id, title, chat_id FROM gruplar WHERE title LIKE ?", (f"%{kelime}%",))
+    rows = cursor.fetchall()
+    if not rows:
+        await context.bot.send_message(chat_id=user_id, text=f"⚠️ `{kelime}` ile eşleşen grup yok.")
+        return
+    keyboard = [[InlineKeyboardButton(f"👥 {title} [ID: {chat_id}]", callback_data=f"grup_{internal_id}")] for internal_id, title, chat_id in rows]
+    await context.bot.send_message(chat_id=user_id, text=f"🔍 **Arama Sonuçları (`{kelime}`):**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -327,73 +517,29 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("➕ Beni Gruba Ekle", url=f"https://t.me/{BOT_USERNAME.replace('@','')}?startgroup=true")],
         [InlineKeyboardButton("⚙️ Yönetim Paneli", callback_data="start_panel_info")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    text = (
-        f"🤖 **Group Assistant**\n\n"
-        f"Merhaba **{user.full_name}**! Ben profesyonel bir grup yönetim ve koruma asistanıyım.\n\n"
-        f"• Gelişmiş Anti-Spam ve Küfür Koruması\n"
-        f"• Medya, Sticker ve Link Filtreleri\n"
-        f"• Özel Notlar ve Detaylı Liderlik İstatistikleri\n\n"
-        f"Beni grubunuza ekleyip **Yönetici** yaparak hemen kullanmaya başlayabilirsiniz."
-    )
-    await update.message.reply_text(text, reply_markup=reply_markup, parse_mode="Markdown")
-
-async def cmd_kod(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if len(context.args) > 0 and context.args[0] == ADMIN_KODU:
-        cursor.execute("INSERT INTO oturumlar (user_id, son_giris) VALUES (?, CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET son_giris = CURRENT_TIMESTAMP", (user_id,))
-        conn.commit()
-        await send_grup_secim_menu(user_id, context)
-    else:
-        await update.message.reply_text("🔐 **Yönetici Doğrulaması:** Lütfen doğru kodu yazın.\nÖrnek: `/kod 892000`", parse_mode="Markdown")
+    await update.message.reply_text(f"🤖 **Group Assistant Pro (v18.0)**\nMerhaba **{user.full_name}**!", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def send_grup_secim_menu(user_id: int, context: ContextTypes.DEFAULT_TYPE):
-    cursor.execute("SELECT id, title FROM gruplar")
+    cursor.execute("SELECT id, title, chat_id FROM gruplar")
     rows = cursor.fetchall()
-    
     if not rows:
-        await context.bot.send_message(chat_id=user_id, text="⚠️ Kayıtlı grup bulunamadı. Botun olduğu grupta `/reload` yazın.")
+        await context.bot.send_message(chat_id=user_id, text="⚠️ Kayıtlı grup bulunamadı.")
         return
-
-    keyboard = []
-    for internal_id, title in rows:
-        keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"grup_{internal_id}")])
-        
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await context.bot.send_message(
-        chat_id=user_id,
-        text="⚙️ **Yönetim Paneli**\n\nAyar yapmak istediğiniz grubu seçin:",
-        reply_markup=reply_markup,
-        parse_mode="Markdown"
-    )
-
-async def cmd_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text="🔐 **Yönetici Doğrulaması:**\n\nÖrnek: `/kod 892000`",
-            parse_mode="Markdown"
-        )
-        if update.effective_chat.type != "private":
-            await update.message.reply_text("📩 Ayar paneli özel mesaj (DM) üzerinden gönderildi.")
-    except Exception:
-        await update.message.reply_text("⚠️ Lütfen önce bota özelden (DM) `/start` yazarak sohbeti başlatın.")
+    keyboard = [[InlineKeyboardButton(f"👥 {title} [{chat_id}]", callback_data=f"grup_{internal_id}")] for internal_id, title, chat_id in rows]
+    await context.bot.send_message(chat_id=user_id, text="⚙️ **Global Yönetim Paneli**\nGrubunuzu seçin:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    
     user_id = query.from_user.id
     data = query.data
 
     if data == "start_panel_info":
-        await query.message.reply_text("💡 Ayar paneline erişmek için `/panel` komutunu yazıp ardından `/kod 892000` kullanabilirsiniz.")
+        await query.message.reply_text("💡 Admin paneli için `/adminsator_admin_mode <şifre>` kullanın.")
         return
 
-    if not await is_admin(user_id):
-        await query.edit_message_text("⚠️ Oturum süresi dolmuş. Lütfen tekrar `/kod 892000` kullanın.")
+    if not await is_admin(update, context):
+        await query.edit_message_text("⚠️ Oturum süresi dolmuş.")
         return
 
     try:
@@ -401,332 +547,245 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             internal_id = int(data.replace("grup_", ""))
             cursor.execute("SELECT chat_id FROM gruplar WHERE id = ?", (internal_id,))
             row = cursor.fetchone()
-            if row:
-                await show_grup_panel(query, row[0])
-            else:
-                await query.edit_message_text("⚠️ Grup veritabanında bulunamadı.")
+            if row: await show_grup_panel_dm(query, row[0])
             
         elif data.startswith("tb_"):
             chat_id = int(data.replace("tb_", ""))
             _, _, b_aktif, _, _, _, _, _, _, _ = get_grup_ayar(chat_id)
-            yeni_durum = 0 if b_aktif == 1 else 1
-            cursor.execute("UPDATE grup_ayarlari SET buton_aktif = ? WHERE chat_id = ?", (yeni_durum, chat_id))
+            cursor.execute("UPDATE grup_ayarlari SET buton_aktif = ? WHERE chat_id = ?", (0 if b_aktif == 1 else 1, chat_id))
             conn.commit()
-            await show_grup_panel(query, chat_id)
+            if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
+                await cmd_ayar(update, context)
+            else:
+                await show_grup_panel_dm(query, chat_id)
 
         elif data.startswith("tkufur_"):
             chat_id = int(data.replace("tkufur_", ""))
             _, _, _, _, _, _, kufur_aktif, _, _, _ = get_grup_ayar(chat_id)
-            yeni_durum = 0 if kufur_aktif == 1 else 1
-            cursor.execute("UPDATE grup_ayarlari SET kufur_filtresi = ? WHERE chat_id = ?", (yeni_durum, chat_id))
+            cursor.execute("UPDATE grup_ayarlari SET kufur_filtresi = ? WHERE chat_id = ?", (0 if kufur_aktif == 1 else 1, chat_id))
             conn.commit()
-            await show_grup_panel(query, chat_id)
+            if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
+                await cmd_ayar(update, context)
+            else:
+                await show_grup_panel_dm(query, chat_id)
 
         elif data.startswith("tlink_"):
             chat_id = int(data.replace("tlink_", ""))
             _, _, _, _, _, _, _, link_aktif, _, _ = get_grup_ayar(chat_id)
-            yeni_durum = 0 if link_aktif == 1 else 1
-            cursor.execute("UPDATE grup_ayarlari SET lock_links = ? WHERE chat_id = ?", (yeni_durum, chat_id))
+            cursor.execute("UPDATE grup_ayarlari SET lock_links = ? WHERE chat_id = ?", (0 if link_aktif == 1 else 1, chat_id))
             conn.commit()
-            await show_grup_panel(query, chat_id)
+            if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
+                await cmd_ayar(update, context)
+            else:
+                await show_grup_panel_dm(query, chat_id)
 
         elif data.startswith("tmedia_"):
             chat_id = int(data.replace("tmedia_", ""))
             _, _, _, _, _, _, _, _, medya_aktif, _ = get_grup_ayar(chat_id)
-            yeni_durum = 0 if medya_aktif == 1 else 1
-            cursor.execute("UPDATE grup_ayarlari SET lock_media = ? WHERE chat_id = ?", (yeni_durum, chat_id))
+            cursor.execute("UPDATE grup_ayarlari SET lock_media = ? WHERE chat_id = ?", (0 if medya_aktif == 1 else 1, chat_id))
             conn.commit()
-            await show_grup_panel(query, chat_id)
+            if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
+                await cmd_ayar(update, context)
+            else:
+                await show_grup_panel_dm(query, chat_id)
 
         elif data.startswith("tsticker_"):
             chat_id = int(data.replace("tsticker_", ""))
             _, _, _, _, _, _, _, _, _, sticker_aktif = get_grup_ayar(chat_id)
-            yeni_durum = 0 if sticker_aktif == 1 else 1
-            cursor.execute("UPDATE grup_ayarlari SET lock_stickers = ? WHERE chat_id = ?", (yeni_durum, chat_id))
+            cursor.execute("UPDATE grup_ayarlari SET lock_stickers = ? WHERE chat_id = ?", (0 if sticker_aktif == 1 else 1, chat_id))
             conn.commit()
-            await show_grup_panel(query, chat_id)
-            
-        elif data.startswith("ehg_"):
-            chat_id = int(data.replace("ehg_", ""))
-            cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_hg') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
-            conn.commit()
-            await query.message.reply_text("✍️ Yeni **Hoş Geldin** mesajını gönderin:\n(`{kullanici}` ve `{grup}` kullanabilirsiniz)")
-
-        elif data.startswith("ehk_"):
-            chat_id = int(data.replace("ehk_", ""))
-            cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_hk') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
-            conn.commit()
-            await query.message.reply_text("✍️ Yeni **Hoşça Kal** mesajını gönderin:")
-
-        elif data.startswith("eby_"):
-            chat_id = int(data.replace("eby_", ""))
-            cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_byazisi') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
-            conn.commit()
-            await query.message.reply_text("✍️ Buton üzerinde görünecek yeni yazıyı gönderin:")
-
-        elif data.startswith("ebl_"):
-            chat_id = int(data.replace("ebl_", ""))
-            cursor.execute("INSERT INTO beklemedeki_islemler (user_id, chat_id, islem) VALUES (?, ?, 'set_blink') ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, islem = excluded.islem", (user_id, chat_id))
-            conn.commit()
-            await query.message.reply_text("✍️ Buton için yeni web linkini (URL) gönderin:")
+            if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
+                await cmd_ayar(update, context)
+            else:
+                await show_grup_panel_dm(query, chat_id)
 
         elif data == "back_to_gruplar":
-            cursor.execute("SELECT id, title FROM gruplar")
+            cursor.execute("SELECT id, title, chat_id FROM gruplar")
             rows = cursor.fetchall()
-            keyboard = []
-            for internal_id, title in rows:
-                keyboard.append([InlineKeyboardButton(f"👥 {title}", callback_data=f"grup_{internal_id}")])
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("⚙️ **Yönetim Paneli**\n\nAyar yapmak istediğiniz grubu seçin:", reply_markup=reply_markup, parse_mode="Markdown")
+            keyboard = [[InlineKeyboardButton(f"👥 {title} [{chat_id}]", callback_data=f"grup_{internal_id}")] for internal_id, title, chat_id in rows]
+            await query.edit_message_text("⚙️ **Global Yönetim Paneli**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
     except Exception as e:
-        await context.bot.send_message(chat_id=user_id, text=f"❌ Hata: {str(e)}")
+        pass
 
-async def show_grup_panel(query, chat_id: int):
+async def show_grup_panel_dm(query, chat_id: int):
     cursor.execute("SELECT title FROM gruplar WHERE chat_id = ?", (chat_id,))
     row_title = cursor.fetchone()
     title = row_title[0] if row_title else "Grup"
-    
     _, _, b_aktif, b_yazisi, b_linki, _, kufur_aktif, link_aktif, medya_aktif, sticker_aktif = get_grup_ayar(chat_id)
-    durum_str = "AÇIK 🟢" if b_aktif == 1 else "KAPALI 🔴"
-    kufur_str = "AÇIK 🟢" if kufur_aktif == 1 else "KAPALI 🔴"
-    link_str = "AÇIK 🟢" if link_aktif == 1 else "KAPALI 🔴"
-    medya_str = "AÇIK 🟢" if medya_aktif == 1 else "KAPALI 🔴"
-    sticker_str = "AÇIK 🟢" if sticker_aktif == 1 else "KAPALI 🔴"
     
     keyboard = [
-        [InlineKeyboardButton(f"🔘 Hoş Geldin Butonu: {durum_str}", callback_data=f"tb_{chat_id}")],
-        [InlineKeyboardButton(f"🛡️ Küfür Filtresi: {kufur_str}", callback_data=f"tkufur_{chat_id}")],
-        [InlineKeyboardButton(f"🔗 Link Engeli: {link_str}", callback_data=f"tlink_{chat_id}")],
-        [InlineKeyboardButton(f"🖼️ Medya Engeli: {medya_str}", callback_data=f"tmedia_{chat_id}")],
-        [InlineKeyboardButton(f"🎭 Sticker Engeli: {sticker_str}", callback_data=f"tsticker_{chat_id}")],
-        [InlineKeyboardButton("✏️ Hoş Geldin Mesajını Düzenle", callback_data=f"ehg_{chat_id}")],
-        [InlineKeyboardButton("✏️ Hoşça Kal Mesajını Düzenle", callback_data=f"ehk_{chat_id}")],
-        [InlineKeyboardButton(f"✏️ Buton Yazısı ({b_yazisi})", callback_data=f"eby_{chat_id}")],
-        [InlineKeyboardButton("🔗 Buton Linkini Düzenle", callback_data=f"ebl_{chat_id}")],
-        [InlineKeyboardButton("🔙 Grup Listesine Dön", callback_data="back_to_gruplar")]
+        [InlineKeyboardButton(f"🔘 Hoş Geldin Butonu: {'AÇIK 🟢' if b_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tb_{chat_id}")],
+        [InlineKeyboardButton(f"🛡️ Küfür Filtresi: {'AÇIK 🟢' if kufur_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tkufur_{chat_id}")],
+        [InlineKeyboardButton(f"🔗 Link Engeli: {'AÇIK 🟢' if link_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tlink_{chat_id}")],
+        [InlineKeyboardButton(f"🖼️ Medya Engeli: {'AÇIK 🟢' if medya_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tmedia_{chat_id}")],
+        [InlineKeyboardButton(f"🎭 Sticker Engeli: {'AÇIK 🟢' if sticker_aktif==1 else 'KAPALI 🔴'}", callback_data=f"tsticker_{chat_id}")],
+        [InlineKeyboardButton("🔙 Tüm Gruplara Dön", callback_data="back_to_gruplar")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    text = f"⚙️ **{title}** - Grup Yönetim Paneli\n\n- Buton Link: {b_linki}\n- Buton Yazı: {b_yazisi}"
-    await query.edit_message_text(text=text, reply_markup=reply_markup, parse_mode="Markdown")
+    await query.edit_message_text(text=f"⚙️ **{title}** [ID: `{chat_id}`]\nPaneli yönetin:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def cmd_reload(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat and update.effective_chat.type in ["group", "supergroup"]:
         kaydet_grup(update.effective_chat.id, update.effective_chat.title)
-    await update.message.reply_text("🔄 Grup verileri ve bot durumu tazelendi.")
+    await update.message.reply_text("🔄 Bilgiler tazelendi.")
 
 async def cmd_kurallar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📜 **Grup Kuralları:**\n1. Küfür, hakaret ve argo yasaktır.\n2. İzinsiz reklam ve link paylaşımı yasaktır.\n3. Herkese saygılı olun.")
+    await update.message.reply_text("📜 **Grup Kuralları:**\n1. Küfür ve argo kesinlikle yasaktır.\n2. Link ve reklam paylaşımı yasaktır.")
 
 async def cmd_hakkinda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(HAKKINDA_METNI, parse_mode="Markdown")
 
 async def cmd_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.reply_to_message.from_user if update.message.reply_to_message else update.effective_user
-    chat = update.effective_chat
-    await update.message.reply_text(f"👤 **Kullanıcı:** {user.full_name}\n🆔 **User ID:** `{user.id}`\n💬 **Chat ID:** `{chat.id}`", parse_mode="Markdown")
+    await update.message.reply_text(f"👤 **Kullanıcı:** {user.full_name}\n🆔 **ID:** `{user.id}`\n💬 **Chat ID:** `{update.effective_chat.id}`", parse_mode="Markdown")
 
-# Not Sistemi
+# Notlar ve Moderasyon
 async def cmd_setnot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
+    if not await is_admin(update, context): return
     if len(context.args) < 2:
         await update.message.reply_text("⚠️ Kullanım: `/setnot <not_adı> <içerik>`")
         return
-    not_adi = context.args[0].lower()
-    not_icerik = " ".join(context.args[1:])
-    chat_id = update.effective_chat.id
-    
-    cursor.execute("INSERT INTO grup_notlari (chat_id, not_adi, not_icerik) VALUES (?, ?, ?) ON CONFLICT(chat_id, not_adi) DO UPDATE SET not_icerik = excluded.not_icerik", (chat_id, not_adi, not_icerik))
+    cursor.execute("INSERT INTO grup_notlari (chat_id, not_adi, not_icerik) VALUES (?, ?, ?) ON CONFLICT(chat_id, not_adi) DO UPDATE SET not_icerik = excluded.not_icerik", (update.effective_chat.id, context.args[0].lower(), " ".join(context.args[1:])))
     conn.commit()
-    await update.message.reply_text(f"✅ `#{not_adi}` adlı not başarıyla kaydedildi!")
+    await update.message.reply_text(f"✅ `#{context.args[0].lower()}` kaydedildi!")
 
 async def cmd_not(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("⚠️ Kullanım: `/not <not_adı>`")
-        return
-    not_adi = context.args[0].lower()
-    chat_id = update.effective_chat.id
-    
-    cursor.execute("SELECT not_icerik FROM grup_notlari WHERE chat_id = ? AND not_adi = ?", (chat_id, not_adi))
+    if not context.args: return
+    cursor.execute("SELECT not_icerik FROM grup_notlari WHERE chat_id = ? AND not_adi = ?", (update.effective_chat.id, context.args[0].lower()))
     row = cursor.fetchone()
-    if row:
-        await update.message.reply_text(row[0], parse_mode="Markdown")
-    else:
-        await update.message.reply_text(f"⚠️ `#{not_adi}` adında bir not bulunamadı.", parse_mode="Markdown")
+    if row: await update.message.reply_text(row[0], parse_mode="Markdown")
+    else: await update.message.reply_text("⚠️ Not bulunamadı.")
 
 async def cmd_notlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    cursor.execute("SELECT not_adi FROM grup_notlari WHERE chat_id = ?", (chat_id,))
+    cursor.execute("SELECT not_adi FROM grup_notlari WHERE chat_id = ?", (update.effective_chat.id,))
     rows = cursor.fetchall()
-    if not rows:
-        await update.message.reply_text("📜 Bu grupta henüz kaydedilmiş not bulunmuyor.")
-        return
-    notlar_listesi = ", ".join([f"`#{r[0]}`" for r in rows])
-    await update.message.reply_text(f"📜 **Gruptaki Kayıtlı Notlar:**\n{notlar_listesi}", parse_mode="Markdown")
+    if not rows: await update.message.reply_text("📜 Kayıtlı not yok.")
+    else: await update.message.reply_text(f"📜 **Notlar:** " + ", ".join([f"`#{r[0]}`" for r in rows]), parse_mode="Markdown")
 
 async def cmd_silnot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if not context.args:
-        await update.message.reply_text("⚠️ Kullanım: `/silnot <not_adı>`")
-        return
-    not_adi = context.args[0].lower()
-    chat_id = update.effective_chat.id
-    
-    cursor.execute("DELETE FROM grup_notlari WHERE chat_id = ? AND not_adi = ?", (chat_id, not_adi))
+    if not await is_admin(update, context): return
+    if not context.args: return
+    cursor.execute("DELETE FROM grup_notlari WHERE chat_id = ? AND not_adi = ?", (update.effective_chat.id, context.args[0].lower()))
     conn.commit()
-    await update.message.reply_text(f"🗑️ `#{not_adi}` notu silindi.")
+    await update.message.reply_text(f"🗑️ Not silindi.")
 
 async def cmd_sil(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if not update.message.reply_to_message:
-        await update.message.reply_text("⚠️ Lütfen silmek istediğiniz mesajı yanıtlayın.")
-        return
+    if not await is_admin(update, context) or not update.message.reply_to_message: return
     try:
         await update.message.reply_to_message.delete()
         await update.message.delete()
-    except Exception:
-        await update.message.reply_text("⚠️ Mesajlar silinemedi.")
+    except Exception: pass
 
-# Moderasyon
 async def cmd_warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if not update.message.reply_to_message:
-        await update.message.reply_text("⚠️ Uyarmak istediğiniz kullanıcının mesajını yanıtlayın.")
-        return
-    
-    target_user = update.message.reply_to_message.from_user
+    if not await is_admin(update, context) or not update.message.reply_to_message: return
+    target = update.message.reply_to_message.from_user
     chat_id = update.effective_chat.id
-    
-    cursor.execute("""
-    INSERT INTO uyarilar (chat_id, user_id, uyari_sayisi)
-    VALUES (?, ?, 1)
-    ON CONFLICT(chat_id, user_id) DO UPDATE SET uyari_sayisi = uyari_sayisi + 1
-    """, (chat_id, target_user.id))
+    cursor.execute("INSERT INTO uyarilar (chat_id, user_id, uyari_sayisi) VALUES (?, ?, 1) ON CONFLICT(chat_id, user_id) DO UPDATE SET uyari_sayisi = uyari_sayisi + 1", (chat_id, target.id))
     conn.commit()
+    son_moderasyon_islemleri[chat_id] = ("warn", target.id)
     
-    cursor.execute("SELECT uyari_sayisi FROM uyarilar WHERE chat_id = ? AND user_id = ?", (chat_id, target_user.id))
+    cursor.execute("SELECT uyari_sayisi FROM uyarilar WHERE chat_id = ? AND user_id = ?", (chat_id, target.id))
     sayi = cursor.fetchone()[0]
-    
     if sayi >= 3:
-        await context.bot.ban_chat_member(chat_id, target_user.id)
-        await update.message.reply_text(f"🚫 {target_user.mention_html()} 3 uyarı sınırını aştığı için yasaklandı!", parse_mode="HTML")
+        await context.bot.ban_chat_member(chat_id, target.id)
+        await update.message.reply_text(f"🚫 {target.mention_html()} 3 uyarıyı aştığı için yasaklandı!", parse_mode="HTML")
     else:
-        await update.message.reply_text(f"⚠️ {target_user.mention_html()} uyarıldı! (Toplam: {sayi}/3)", parse_mode="HTML")
-
-async def cmd_unwarn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if not update.message.reply_to_message:
-        return
-    target_user = update.message.reply_to_message.from_user
-    cursor.execute("UPDATE uyarilar SET uyari_sayisi = 0 WHERE chat_id = ? AND user_id = ?", (update.effective_chat.id, target_user.id))
-    conn.commit()
-    await update.message.reply_text(f"✅ {target_user.mention_html()} kullanıcısının uyarıları sıfırlandı.", parse_mode="HTML")
+        await update.message.reply_text(f"⚠️ {target.mention_html()} uyarıldı ({sayi}/3). `/undo` ile geri alabilirsiniz.", parse_mode="HTML")
 
 async def cmd_mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if update.message.reply_to_message:
-        target_user = update.message.reply_to_message.from_user
-        await context.bot.restrict_chat_member(update.effective_chat.id, target_user.id, permissions=ChatPermissions(can_send_messages=False))
-        await update.message.reply_text(f"🤐 {target_user.mention_html()} susturuldu.", parse_mode="HTML")
+    if not await is_admin(update, context) or not update.message.reply_to_message: return
+    target = update.message.reply_to_message.from_user
+    chat_id = update.effective_chat.id
+    await context.bot.restrict_chat_member(chat_id, target.id, permissions=ChatPermissions(can_send_messages=False))
+    son_moderasyon_islemleri[chat_id] = ("mute", target.id)
+    await update.message.reply_text(f"🤐 {target.mention_html()} susturuldu.", parse_mode="HTML")
 
 async def cmd_unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if update.message.reply_to_message:
-        target_user = update.message.reply_to_message.from_user
-        await context.bot.restrict_chat_member(update.effective_chat.id, target_user.id, permissions=ChatPermissions(can_send_messages=True))
-        await update.message.reply_text(f"🔊 {target_user.mention_html()} susturması kaldırıldı.", parse_mode="HTML")
+    if not await is_admin(update, context) or not update.message.reply_to_message: return
+    target = update.message.reply_to_message.from_user
+    await context.bot.restrict_chat_member(update.effective_chat.id, target.id, permissions=ChatPermissions(can_send_messages=True))
+    await update.message.reply_text(f"🔊 {target.mention_html()} ses açıldı.", parse_mode="HTML")
 
 async def cmd_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if update.message.reply_to_message:
-        target_user = update.message.reply_to_message.from_user
-        await context.bot.ban_chat_member(update.effective_chat.id, target_user.id)
-        await update.message.reply_text(f"🚫 {target_user.mention_html()} gruptan yasaklandı.", parse_mode="HTML")
+    if not await is_admin(update, context) or not update.message.reply_to_message: return
+    target = update.message.reply_to_message.from_user
+    await context.bot.ban_chat_member(update.effective_chat.id, target.id)
+    await update.message.reply_text(f"🚫 {target.mention_html()} banlandı.", parse_mode="HTML")
 
 async def cmd_unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if update.message.reply_to_message:
-        target_user = update.message.reply_to_message.from_user
-        await context.bot.unban_chat_member(update.effective_chat.id, target_user.id)
-        await update.message.reply_text(f"✅ {target_user.mention_html()} yasağı kaldırıldı.", parse_mode="HTML")
+    if not await is_admin(update, context) or not update.message.reply_to_message: return
+    target = update.message.reply_to_message.from_user
+    await context.bot.unban_chat_member(update.effective_chat.id, target.id)
+    await update.message.reply_text(f"✅ {target.mention_html()} banı kaldırıldı.", parse_mode="HTML")
 
-async def cmd_pin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    if update.message.reply_to_message:
-        await context.bot.pin_chat_message(update.effective_chat.id, update.message.reply_to_message.message_id)
-        await update.message.reply_text("📌 Mesaj başarıyla sabitlendi.")
-
-async def cmd_unpin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_admin(update.effective_user.id):
-        return
-    await context.bot.unpin_all_chat_messages(update.effective_chat.id)
-    await update.message.reply_text("📌 Sabitlenen tüm mesajlar kaldırıldı.")
-
-async def cmd_siralama(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    cursor.execute("SELECT full_name, mesaj_sayisi FROM mesajlar WHERE chat_id = ? ORDER BY mesaj_sayisi DESC LIMIT 10", (chat_id,))
-    rows = cursor.fetchall()
-    
-    if not rows:
-        await update.message.reply_text("Henüz mesaj kaydı bulunmuyor.")
-        return
-        
-    metin_listesi = "🏆 **En Çok Mesaj Atanlar Sıralaması**\n\n"
-    for i, (f_name, count) in enumerate(rows, 1):
-        temiz_isim = f_name if f_name else "Kullanıcı"
-        metin_listesi += f"{i}. **{temiz_isim}** — `{count}` mesaj\n"
-    
-    await update.message.reply_text(metin_listesi, parse_mode="Markdown")
-
-    names = [row[0][:12] for row in rows]
-    counts = [row[1] for row in rows]
-    
+# Skorboard Grafik
+def generate_scoreboard_image(names, counts, title_text):
     plt.style.use('dark_background')
-    fig, ax = plt.subplots(figsize=(8, 5))
-    fig.patch.set_facecolor('#121212')
-    ax.set_facecolor('#1e1e1e')
-    
-    bars = ax.barh(names[::-1], counts[::-1], color='#00adb5', edgecolor='#393e46', height=0.6, linewidth=1.2)
-    
+    fig, ax = plt.subplots(figsize=(9, 5.5))
+    fig.patch.set_facecolor('#0d1117')
+    ax.set_facecolor('#161b22')
+    y_pos = np.arange(len(names))
+    colors = plt.cm.plasma(np.linspace(0.2, 0.8, len(names)))
+    bars = ax.barh(y_pos, counts, color=colors, height=0.6, edgecolor='#30363d', linewidth=1.5, zorder=3)
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(names, color='#c9d1d9', fontsize=11, fontweight='bold')
+    ax.invert_yaxis()
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#555555')
-    ax.spines['bottom'].set_color('#555555')
-    ax.tick_params(colors='#ffffff', labelsize=10)
-    ax.grid(axis='x', linestyle='--', alpha=0.2, color='#aaaaaa')
-    
+    ax.spines['left'].set_color('#30363d')
+    ax.spines['bottom'].set_color('#30363d')
+    ax.grid(axis='x', linestyle='--', alpha=0.15, color='#8b949e', zorder=0)
+    ax.tick_params(colors='#8b949e', labelsize=10)
     for bar in bars:
         width = bar.get_width()
-        ax.text(width + 0.5, bar.get_y() + bar.get_height()/2, f'{int(width)}', 
-                va='center', ha='left', color='#00adb5', fontsize=10, fontweight='bold')
-
-    plt.title('🏆 Mesaj İstatistikleri Grafiği', fontsize=14, color='#eeeeee', pad=15, fontweight='bold')
-    plt.xlabel('Mesaj Sayısı', fontsize=11, color='#cccccc')
+        ax.text(width + (max(counts) * 0.02 if max(counts)>0 else 1), bar.get_y() + bar.get_height()/2, 
+                f'{int(width)} msj', va='center', ha='left', color='#58a6ff', fontsize=10, fontweight='bold')
+    plt.title(title_text, fontsize=15, color='#f0f6fc', pad=20, fontweight='bold')
+    plt.xlabel('Gönderilen Mesaj Sayısı', fontsize=11, color='#8b949e', labelpad=10)
     plt.tight_layout()
-    
-    chart_path = 'siralama.png'
-    plt.savefig(chart_path, dpi=200, facecolor=fig.get_facecolor(), edgecolor='none')
+    path = 'scoreboard.png'
+    plt.savefig(path, dpi=250, facecolor=fig.get_facecolor(), edgecolor='none')
     plt.close()
-    
-    with open(chart_path, 'rb') as photo:
-        await update.message.reply_photo(photo=photo, caption="📊 **Grafiksel Sıralama Raporu**")
+    return path
+
+async def siralama_getir(update: Update, context: ContextTypes.DEFAULT_TYPE, zaman_filtresi: str, grafik_mi: bool, baslik: str):
+    chat_id = update.effective_chat.id
+    if zaman_filtresi == "gunluk": zaman_sorgu = "datetime('now', '-1 day')"
+    elif zaman_filtresi == "haftalik": zaman_sorgu = "datetime('now', '-7 days')"
+    elif zaman_filtresi == "aylik": zaman_sorgu = "datetime('now', '-30 days')"
+    else: zaman_sorgu = "datetime('now', '-10 years')"
+
+    cursor.execute(f"SELECT full_name, mesaj_sayisi FROM mesajlar WHERE chat_id = ? AND tarih >= {zaman_sorgu} ORDER BY mesaj_sayisi DESC LIMIT 10", (chat_id,))
+    rows = cursor.fetchall()
+    if not rows:
+        await update.message.reply_text("📊 Bu dönemde henüz mesaj kaydı bulunmuyor.")
+        return
+
+    if not grafik_mi:
+        metin = f"🏆 **{baslik}**\n\n"
+        medallar = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        for i, (f_name, count) in enumerate(rows):
+            simge = medallar[i] if i < len(medallar) else f"{i+1}."
+            metin += f"{simge} **{f_name if f_name else 'Kullanıcı'}** — `{count}` mesaj\n"
+        await update.message.reply_text(metin, parse_mode="Markdown")
+    else:
+        names = [row[0][:14] if row[0] else "Kullanıcı" for row in rows]
+        counts = [row[1] for row in rows]
+        path = generate_scoreboard_image(names, counts, baslik)
+        with open(path, 'rb') as photo:
+            await update.message.reply_photo(photo=photo, caption=f"📊 **{baslik} (Görsel Rapor)**", parse_mode="Markdown")
+
+async def cmd_gunluk(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_getir(update, context, "gunluk", False, "Günlük Mesaj Sıralaması")
+async def cmd_haftalik(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_getir(update, context, "haftalik", False, "Haftalık Mesaj Sıralaması")
+async def cmd_aylik(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_getir(update, context, "aylik", False, "Aylık Mesaj Sıralaması")
+async def cmd_tum(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_getir(update, context, "tum", False, "Tüm Zamanların Mesaj Sıralaması")
+async def cmd_grafikgunluk(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_getir(update, context, "gunluk", True, "🏆 Günlük Skorboard")
+async def cmd_grafikhaftalik(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_getir(update, context, "haftalik", True, "🏆 Haftalık Skorboard")
+async def cmd_grafikaylik(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_getir(update, context, "aylik", True, "🏆 Aylık Skorboard")
+async def cmd_grafiktum(update: Update, context: ContextTypes.DEFAULT_TYPE): await siralama_getir(update, context, "tum", True, "🏆 Tüm Zamanlar Skorboard")
 
 def main():
-    # 1. Adım: Dummy HTTP sunucusunu ayrı bir arka plan thread'inde (iş parçacığında) başlat
-    server_thread = threading.Thread(target=run_dummy_server, daemon=True)
-    server_thread.start()
-
+    threading.Thread(target=run_dummy_server, daemon=True).start()
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(ChatMemberHandler(bot_grup_durum_takibi, ChatMemberHandler.MY_CHAT_MEMBER))
@@ -735,8 +794,8 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, uye_durum_takibi))
 
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("kod", cmd_kod))
-    app.add_handler(CommandHandler("panel", cmd_panel))
+    app.add_handler(CommandHandler("adminsator_admin_mode", cmd_admin_mode))
+    app.add_handler(CommandHandler("adminsator_admin_mode_goup_search", cmd_grup_arama))
     app.add_handler(CommandHandler("reload", cmd_reload))
     app.add_handler(CommandHandler("kurallar", cmd_kurallar))
     app.add_handler(CommandHandler("hakkinda", cmd_hakkinda))
@@ -747,21 +806,33 @@ def main():
     app.add_handler(CommandHandler("silnot", cmd_silnot))
     app.add_handler(CommandHandler("sil", cmd_sil))
     app.add_handler(CommandHandler("warn", cmd_warn))
-    app.add_handler(CommandHandler("unwarn", cmd_unwarn))
     app.add_handler(CommandHandler("mute", cmd_mute))
     app.add_handler(CommandHandler("unmute", cmd_unmute))
     app.add_handler(CommandHandler("ban", cmd_ban))
     app.add_handler(CommandHandler("unban", cmd_unban))
-    app.add_handler(CommandHandler("pin", cmd_pin))
-    app.add_handler(CommandHandler("unpin", cmd_unpin))
-    app.add_handler(CommandHandler(["tum", "siralama", "gunluk", "haftalik", "aylik"], cmd_siralama))
+    
+    # v18.0 Komutları
+    app.add_handler(CommandHandler("ayar", cmd_ayar))
+    app.add_handler(CommandHandler("broadcast", cmd_broadcast))
+    app.add_handler(CommandHandler("otokelime", cmd_otokelime))
+    app.add_handler(CommandHandler("silkelime", cmd_silkelime))
+    app.add_handler(CommandHandler("temizle", cmd_temizle))
+    app.add_handler(CommandHandler("undo", cmd_undo))
+    app.add_handler(CommandHandler("whois", cmd_whois))
+    
+    app.add_handler(CommandHandler("gunluk", cmd_gunluk))
+    app.add_handler(CommandHandler("haftalik", cmd_haftalik))
+    app.add_handler(CommandHandler("aylik", cmd_aylik))
+    app.add_handler(CommandHandler("tum", cmd_tum))
+    app.add_handler(CommandHandler("grafikgunluk", cmd_grafikgunluk))
+    app.add_handler(CommandHandler("grafikhaftalik", cmd_grafikhaftalik))
+    app.add_handler(CommandHandler("grafikaylik", cmd_grafikaylik))
+    app.add_handler(CommandHandler("grafiktum", cmd_grafiktum))
     
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, mesaj_takip))
 
-    print(f"Group Assistant ({BOT_USERNAME}) Polling Modunda ve Port Kilidi Açık Olarak Başlatılıyor...")
-    
-    # 2. Adım: Polling ile Telegram'ı sürekli dinle
+    print("Group Assistant v18.0 Başlatılıyor...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
