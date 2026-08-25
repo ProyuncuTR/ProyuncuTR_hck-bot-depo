@@ -1,6 +1,7 @@
 import logging
 import sqlite3
 import os
+import sys
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
@@ -21,7 +22,7 @@ Thread(target=run_flask, daemon=True).start()
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = "8698823300:AAFN_D4WnGdM7DZSqqBCeKwziiFoVYDVM6g"
+TOKEN = "8698823300:AAFdPKZJUSWthv_xWeetYlA4yZJ2EvXugfM"
 GLOBAL_ADMINS = {6115982173, 8140417937}
 
 db = sqlite3.connect("bot_data.db", check_same_thread=False)
@@ -64,6 +65,19 @@ async def start_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
+
+async def yenile_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(update, context):
+        await update.message.reply_text("⛔ Bu komutu sadece grup yöneticileri ve bot sahipleri kullanabilir!")
+        return
+    await update.message.reply_text("🔄 **Grup yönetici listesi ve bot önbelleği başarıyla güncellendi!**", parse_mode="Markdown")
+
+async def restart_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in GLOBAL_ADMINS:
+        await update.message.reply_text("⛔ Botu yeniden başlatma yetkisi sadece bot sahiplerine aittir!")
+        return
+    await update.message.reply_text("🔄 **Bot yeniden başlatılıyor... Lütfen bekleyin.**", parse_mode="Markdown")
+    os.execl(sys.executable, sys.executable, *sys.argv)
 
 async def admin_mode_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
@@ -165,6 +179,7 @@ async def admin_paneli(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "👑 **Global Admin Kontrol Paneli**\n\n"
         "• `/gruplar` - Botun ekli olduğu tüm grupları listeler.\n"
+        "• `/restart` - Botu tamamen yeniden başlatır.\n"
         "• `/adminsator_admin_mode@ProyuncuTR_group_search <isim>` - Grup arar.\n"
         "• `/duyuru <mesaj>` - Ekli tüm gruplara mesaj gönderir.\n"
         "• Mod Değiştirme: `/adminsator_admin_mode@ProyuncuTR` veya `/adminsator_admin_mode@hck_cpm`"
@@ -269,6 +284,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.commit()
         await query.edit_message_text(f"🎧 Dinleme modu güncellendi: {'AÇIK' if new_val==1 else 'KAPALI'}")
         
+    elif data == "reload_settings":
+        await query.edit_message_text("🔄 **Grup ayarları ve yönetici yetkileri yenilendi.**", parse_mode="Markdown")
+        
     elif data == "sys_info":
         await query.edit_message_text("📊 **v18.0 Full Engine**\n- Durum: Kararlı (Stabil)\n- Veritabanı: SQLite3\n- Modüller: Aktif", parse_mode="Markdown")
         
@@ -277,6 +295,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📜 **Komut Listesi:**\n"
             "/start - Botu başlatır\n"
             "/ayar - Panel\n"
+            "/yenile veya /reload - Yönetici listesini günceller\n"
             "/dinle - Dinleme modunu açar/kapar\n"
             "/pin - Mesaj sabitler\n"
             "/unpin - Sabitlenenleri kaldırır\n"
@@ -459,6 +478,9 @@ def main():
     app.add_handler(CommandHandler("admin", admin_paneli))
     app.add_handler(CommandHandler("gruplar", gruplar_komutu))
     app.add_handler(CommandHandler("ayar", ayar_komutu))
+    app.add_handler(CommandHandler("yenile", yenile_komutu))
+    app.add_handler(CommandHandler("reload", yenile_komutu))
+    app.add_handler(CommandHandler("restart", restart_komutu))
     app.add_handler(CommandHandler("dinle", dinle_komutu))
     
     app.add_handler(CommandHandler("adminsator_admin_mode", admin_mode_komutu))
