@@ -6,29 +6,24 @@ from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# --- RENDER İÇİN MİNİ FLASK WEB SUNUCUSU (ÜCRETSİZ WEB SERVICE İÇİN) ---
 app_web = Flask(__name__)
 
 @app_web.route('/')
 def home():
-    return "Group Assistant v18.0 Aktif ve Çalışıyor!"
+    return "Bot Active"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app_web.run(host="0.0.0.0", port=port)
 
-# Flask sunucusunu arka planda başlat
 Thread(target=run_flask, daemon=True).start()
 
-# --- LOGLAMA ---
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- BİLGİLER VE YETKİLİLER ---
 TOKEN = "8698823300:AAFdPKZJUSWthv_xWeetYlA4yZJ2EvXugfM"
-GLOBAL_ADMINS = {6115982173, 8140417937} # @ProyuncuTR ve @hck_cpm
+GLOBAL_ADMINS = {6115982173, 8140417937}
 
-# --- VERİTABANI VE TABLOLAR ---
 db = sqlite3.connect("bot_data.db", check_same_thread=False)
 cursor = db.cursor()
 
@@ -47,8 +42,6 @@ cursor.execute("CREATE TABLE IF NOT EXISTS auto_replies (chat_id INTEGER, keywor
 cursor.execute("CREATE TABLE IF NOT EXISTS filters_db (chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word))")
 db.commit()
 
-
-# --- GELİŞMİŞ YÖNETİM PANELİ VE İNTERAKTİF BUTONLAR ---
 async def ayar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
         await update.message.reply_text("⚠️ Bu komut sadece grup içinde kullanılabilir!")
@@ -70,8 +63,6 @@ async def ayar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("⚙️ **Grup Yönetim Paneli (v18.0 Full)**\nAşağıdaki butonlardan grup koruma katmanlarını yönetebilirsin:", reply_markup=reply_markup, parse_mode="Markdown")
 
-
-# --- BUTON TIKLAMA YÖNETİCİSİ (CALLBACK) ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -98,8 +89,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "sys_info":
         await query.edit_message_text("📊 **v18.0 Full Engine**\n- Durum: Kararlı (Stabil)\n- Veritabanı: SQLite3\n- Modüller: Aktif", parse_mode="Markdown")
 
-
-# --- MESAJ TAKİBİ, OTO-CEVAP VE FİLTRE MOTORU ---
 async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_message or not update.effective_user or update.effective_chat.type == "private":
         return
@@ -109,7 +98,6 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or update.effective_user.first_name
     text = update.effective_message.text
 
-    # Mesaj sayacı
     cursor.execute("SELECT message_count FROM messages WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
     row = cursor.fetchone()
     if row:
@@ -119,7 +107,6 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.commit()
 
     if text:
-        # Küfür/Yasaklı Kelime Filtre Kontrolü
         cursor.execute("SELECT word FROM filters_db WHERE chat_id = ?", (chat_id,))
         filtered_words = cursor.fetchall()
         for (f_word,) in filtered_words:
@@ -130,14 +117,11 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
                 return
 
-        # Oto-cevap motoru
         cursor.execute("SELECT reply FROM auto_replies WHERE chat_id = ? AND ? LIKE '%' || keyword || '%'", (chat_id, text))
         reply_row = cursor.fetchone()
         if reply_row:
             await update.message.reply_text(reply_row[0])
 
-
-# --- SKORBOARD KOMUTLARI ---
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     cursor.execute("SELECT username, message_count FROM messages WHERE chat_id = ? ORDER BY message_count DESC LIMIT 10", (chat_id,))
@@ -153,8 +137,6 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, parse_mode="Markdown")
 
-
-# --- MODERASYON ARAÇLARI ---
 async def ban_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in GLOBAL_ADMINS:
         await update.message.reply_text("⛔ Yetkin yok!")
@@ -166,7 +148,6 @@ async def ban_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_chat.ban_member(target.id)
     await update.message.reply_text(f"🔨 {target.first_name} yasaklandı!")
 
-
 async def mute_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in GLOBAL_ADMINS:
         await update.message.reply_text("⛔ Yetkin yok!")
@@ -177,7 +158,6 @@ async def mute_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target = update.effective_message.reply_to_message.from_user
     await update.effective_chat.restrict_member(target.id, permissions=ChatPermissions(can_send_messages=False))
     await update.message.reply_text(f"🔇 {target.first_name} susturuldu!")
-
 
 async def warn_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in GLOBAL_ADMINS:
@@ -201,7 +181,6 @@ async def warn_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_chat.ban_member(target.id)
         await update.message.reply_text(f"🚨 {target.first_name} 3 uyarı sınırını aştığı için banlandı!")
 
-
 async def sil_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_message.reply_to_message:
         await update.message.reply_text("⚠️ Silinecek mesaja yanıt vermelisin.")
@@ -209,8 +188,6 @@ async def sil_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_to_message.delete()
     await update.message.delete()
 
-
-# --- NOT SİSTEMİ VE OTO-CEVAP EKLEME ---
 async def setnot_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("⚠️ Kullanım: `/setnot <anahtar> <içerik>`", parse_mode="Markdown")
@@ -222,7 +199,6 @@ async def setnot_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.execute("INSERT OR REPLACE INTO notes (chat_id, keyword, content) VALUES (?, ?, ?)", (chat_id, keyword, content))
     db.commit()
     await update.message.reply_text(f"✅ '{keyword}' notu kaydedildi!")
-
 
 async def not_getir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -238,7 +214,6 @@ async def not_getir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Bu anahtarla kayıtlı not bulunamadı.")
 
-
 async def setcevap_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("⚠️ Kullanım: `/setcevap <tetikleyici> <cevap>`", parse_mode="Markdown")
@@ -251,8 +226,6 @@ async def setcevap_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.commit()
     await update.message.reply_text(f"✅ Oto-cevap eklendi: '{keyword}' tetiklendiğinde yanıt verilecek.")
 
-
-# --- GLOBAL DUYURU ---
 async def duyuru_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in GLOBAL_ADMINS:
         await update.message.reply_text("⛔ Bu komutu sadece global yöneticiler kullanabilir!")
@@ -275,12 +248,9 @@ async def duyuru_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"✅ Duyuru başarıyla {success} gruba iletildi.")
 
-
-# --- ANA ÇALIŞTIRICI ---
 def main():
     app = Application.builder().token(TOKEN).build()
 
-    # İşleyiciler
     app.add_handler(CommandHandler("ayar", ayar_komutu))
     app.add_handler(CommandHandler("gunluk", leaderboard))
     app.add_handler(CommandHandler("haftalik", leaderboard))
