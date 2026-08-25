@@ -1,8 +1,24 @@
 import logging
 import sqlite3
-from datetime import datetime
+import os
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+
+# --- RENDER İÇİN MİNİ FLASK WEB SUNUCUSU (ÜCRETSİZ WEB SERVICE İÇİN) ---
+app_web = Flask(__name__)
+
+@app_web.route('/')
+def home():
+    return "Group Assistant v18.0 Aktif ve Çalışıyor!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app_web.run(host="0.0.0.0", port=port)
+
+# Flask sunucusunu arka planda başlat
+Thread(target=run_flask, daemon=True).start()
 
 # --- LOGLAMA ---
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -74,7 +90,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "toggle_curse":
         cursor.execute("SELECT anti_curse FROM settings WHERE chat_id = ?", (chat_id,))
         row = cursor.fetchone()
-        new_val = 0 if (row and row[0] == 1) else 1
+        new_val = 0 if (row and row[1] == 1) else 1
         cursor.execute("INSERT OR REPLACE INTO settings (chat_id, anti_curse) VALUES (?, ?)", (chat_id, new_val))
         db.commit()
         await query.edit_message_text(f"✅ Küfür Koruması güncellendi: {'AÇIK' if new_val==1 else 'KAPALI'}")
@@ -110,7 +126,6 @@ async def mesaj_takip(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if f_word.lower() in text.lower():
                 try:
                     await update.effective_message.delete()
-                    await update.channel_post.chat.send_message(f"⚠️ {username}, yasaklı kelime kullandığın için mesajın silindi!")
                 except Exception:
                     pass
                 return
@@ -139,7 +154,7 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
-# --- MODERASYON ARAÇLARI (BAN, MUTE, WARN, KICK, SİL) ---
+# --- MODERASYON ARAÇLARI ---
 async def ban_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in GLOBAL_ADMINS:
         await update.message.reply_text("⛔ Yetkin yok!")
