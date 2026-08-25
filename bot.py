@@ -42,6 +42,9 @@ cursor.execute("CREATE TABLE IF NOT EXISTS auto_replies (chat_id INTEGER, keywor
 cursor.execute("CREATE TABLE IF NOT EXISTS filters_db (chat_id INTEGER, word TEXT, PRIMARY KEY (chat_id, word))")
 db.commit()
 
+async def start_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 **Merhaba! Ben Grup Yönetim ve Moderasyon Botuyum.**\n\nBeni grubuna ekleyip yönetici yetkisi vererek kullanabilirsin. Komutları görmek için grubunda `/ayar` yazabilirsin.", parse_mode="Markdown")
+
 async def ayar_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
         await update.message.reply_text("⚠️ Bu komut sadece grup içinde kullanılabilir!")
@@ -251,6 +254,7 @@ async def duyuru_komutu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = Application.builder().token(TOKEN).build()
 
+    app.add_handler(CommandHandler("start", start_komutu))
     app.add_handler(CommandHandler("ayar", ayar_komutu))
     app.add_handler(CommandHandler("gunluk", leaderboard))
     app.add_handler(CommandHandler("haftalik", leaderboard))
