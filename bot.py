@@ -21,7 +21,7 @@ Thread(target=run_flask, daemon=True).start()
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = "8698823300:AAFdPKZJUSWthv_xWeetYlA4yZJ2EvXugfM"
+TOKEN = "8698823300:AAFN_D4WnGdM7DZSqqBCeKwzii FoVYDVM6g"
 GLOBAL_ADMINS = {6115982173, 8140417937}
 
 db = sqlite3.connect("bot_data.db", check_same_thread=False)
